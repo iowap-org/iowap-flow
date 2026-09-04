@@ -1,0 +1,35 @@
+[project]
+name = "iowap-flow"
+version = "0.1.0"
+description = "IOWAP Flow Runner - plan/fan-out/join orchestrator node (dumb Kanban) for the IOWAP relay cluster"
+readme = "README.md"
+license = "AGPL-3.0-only"
+requires-python = ">=3.11"
+dependencies = [
+    "iowap-node @ git+ssh://git@github.com/iowap-org/iowap-node.git@881a234b5df7c1ca9a47ee76f9f9a9ed4225dec5",
+    "httpx>=0.27",
+    "pydantic>=2.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.4",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/flow_node"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

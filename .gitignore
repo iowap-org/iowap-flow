@@ -1,0 +1,14 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+dist/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Local tooling (gitignored per project-board convention)
+.hermes/
+
+# Board symlink (local-only)
+board
