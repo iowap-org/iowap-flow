@@ -1,0 +1,29 @@
+# profiles/node.yaml — dedizierter Flow-Runner-Node (T-172)
+# FROZEN (Plan Task 6) — bytegenau aus .hermes/plans/flow-run-mvp.md übernommen.
+
+node_name: flow-runner
+description: "Dummer Kanban — Orchestrator-Node (flow.run)"
+status: idle
+
+capabilities:
+  - name: flow.run
+    type: workflow
+    version: "1.0.0"
+    claimable: true
+    long_run: true            # T-154: Lease statt 300s-Claim-Timeout
+    max_parallel: 1           # D7: ein Kanban pro Node
+    timeout: 14400            # 4h Handler-Budget
+    description: "Nimmt einen geplanten Flow an und führt ihn als Plain-Tasks aus. Input: original_request (wörtliche Aufgabe)."
+    input_schema:
+      fields:
+        original_request:
+          name: original_request
+          type: string
+          required: true
+          description: "Die ursprüngliche Aufgabe wörtlich. Example: 'Erstelle 3 Produktbilder und zippe sie'."
+        options:
+          name: options
+          type: object
+          required: false
+          description: "Optional: {max_flow_seconds: 14400}."
+    handler: "python3 /app/handlers/flow_run.py"
