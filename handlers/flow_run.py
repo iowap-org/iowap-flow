@@ -1,9 +1,12 @@
-"""flow_run.py — Handler-Einstiegspunkt für Capability flow.run (T-172).
+"""flow_run.py — Handler-Einstiegspunkt für Capability flow.run (T-172, Plan Task 5).
 
-SKELETT (Phase 2, Scaffold): Nur Konstanten/Signaturen/Docstrings — Pipeline in Phase 3
-(Plan Task 5). Läuft als `python3 /app/handlers/flow_run.py` (profiles/node.yaml).
+Läuft als `python3 /app/handlers/flow_run.py` (profiles/node.yaml — FROZEN-Kontrakt
+§2.4, im Node registriert). Dünner Delegat auf die implementierte Pipeline in
+`flow_node.__main__` (Phase 3): dort liegen stdin/stdout-Handling, Env-Check,
+stdout-only-Contract und exit-1-Pfade — dieser File hält nur die Pfad- und
+Konstanten-Verträge, damit Profil und Code synchron bleiben.
 
-stdin/stdout-Contract (gemäß handler_runner, Plan Task 5 / §0-Fakt):
+Contract (gemäß handler_runner, Plan Task 5 / §0-Fakt):
   stdin : {"task": "...", "options": {...}}
   env   : RELAY_BASE_URL, RELAY_TOKEN_FILE, RELAY_STAGE_ID, RELAY_TASK_ID, RELAY_NODE_ID
   stdout: NUR das finale JSON-Result (kein Logging auf stdout — Logging → stderr)
@@ -12,34 +15,13 @@ stdin/stdout-Contract (gemäß handler_runner, Plan Task 5 / §0-Fakt):
 """
 from __future__ import annotations
 
-import json  # noqa: F401  (Phase 3: stdin-JSON lesen)
-import os  # noqa: F401  (Phase 3: RELAY_*-Env lesen)
-import sys  # noqa: F401  (Phase 3: stderr / exit 1)
+from flow_node.__main__ import main
 
-from flow_node.discovery import fetch_capabilities  # noqa: F401  (Phase 3)
-from flow_node.plan import PlanError  # noqa: F401  (Phase 3: Raises)
-from flow_node.relay_api import RelayApi  # noqa: F401  (Phase 3)
-from flow_node.runner import (  # noqa: F401  (Phase 3)
-    build_plan_prompt,
-    extract_plan_json,
-    run,
-)
-
-# Frozen Konstanten (Plan §2.4/§3 Task 4/5)
+# Frozen Konstanten (Plan §2.4/§3 Task 4/5) — Quelle der Wahrheit ist
+# flow_node.runner (PLAN_CAPABILITY) bzw. __main__ (ORIGIN_PAYLOAD_KEY = "task");
+# hier nur gespiegelt als Dokumentation des Profil-Vertrags.
 PLAN_CAPABILITY = "agent.ai"      # Planungs-Kind (idempotency_key flow-<origin>-_plan)
 ORIGIN_PAYLOAD_KEY = "task"       # stdin-Payload-Key für die wörtliche Aufgabe
 
-
-def main() -> None:
-    """Handler-Pipeline (Plan Task 5):
-      stdin-JSON lesen → Phase 0 (Planung): fetch_capabilities (Planungs-Snapshot) →
-      build_plan_prompt → Planungs-Kind an agent.ai submittet → poll + extract_plan_json →
-      parse_plan → validate_capabilities_live (frisch) → runner.run(...).
-    Fehler: PlanError → stderr mit Grund, exit 1 (kein Planungs-Result/kein valides JSON
-    nach D9-Retry → stderr "reason: plan phase failed: <grund>", exit 1).
-    stdout NUR das finale JSON-Result."""
-    raise NotImplementedError
-
-
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

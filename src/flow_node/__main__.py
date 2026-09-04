@@ -81,13 +81,15 @@ def main() -> int:
             node_id=os.environ.get("RELAY_NODE_ID", ""),
             options=options,
         )
-    except PlanError as e:
+    except (PlanError, FlowError) as e:
         # Plan Task 5: PlanError → stderr mit Grund, exit 1 (Server macht Stage failed)
+        # FlowError → exit 1 mit stderr "reason: plan phase failed: <grund>" bzw. Grund
         raise _fail(str(e)) from e
-    except FlowError as e:
-        # Plan Task 5: kein Planungs-Result/kein valides JSON nach Retry → exit 1
-        # mit stderr "reason: plan phase failed: <grund>" bzw. Flow-Fehler-Grund
-        raise _fail(str(e)) from e
+    except Exception as e:
+        # Letzte Verteidigung des stdout-only-Contracts: Relay-Ausfälle (httpx.ConnectError
+        # etc.) dürfen NICHT als Traceback auf stderr enden — der Server-Retry-Pfad parst
+        # "reason: <grund>". Traceback bleibt trotzdem im Exception-Chaining erhalten.
+        raise _fail(f"handler failed: {type(e).__name__}: {e}") from e
 
     # stdout NUR das finale JSON-Result (kein Logging auf stdout!)
     json.dump(result, sys.stdout)
