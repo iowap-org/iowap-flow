@@ -1,5 +1,4 @@
 # profiles/node.yaml — dedizierter Flow-Runner-Node (T-172)
-# FROZEN (Plan Task 6) — bytegenau aus .hermes/plans/flow-run-mvp.md übernommen.
 
 node_name: flow-runner
 description: "Dummer Kanban — Orchestrator-Node (flow.run)"
