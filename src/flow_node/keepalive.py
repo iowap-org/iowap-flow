@@ -8,8 +8,8 @@ failures are fail-soft: logged to stderr, never propagated (AC2).
 """
 from __future__ import annotations
 
-import threading  # noqa: F401  (Phase 3: cadence thread)
-from typing import Callable  # noqa: UP035  (FROZEN design.md import — typing.Callable)
+import threading
+from typing import Callable  # noqa: UP035  (FROZEN design.md §2.1 import — typing.Callable)
 
 from flow_node.relay_api import RelayApi
 
@@ -27,7 +27,17 @@ def send_longrun_note(
     Message is truncated to NOTE_MAX_LENGTH. Returns True on success,
     False on any failure; never raises. Failures reported via log(msg).
     """
-    raise NotImplementedError
+    if not task_id:
+        if log is not None:
+            log("longrun note skipped: empty task id")
+        return False
+    try:
+        api.add_note(task_id, message[:NOTE_MAX_LENGTH], kind="longrun")
+        return True
+    except Exception as exc:  # noqa: BLE001  (D5 fail-soft — "never raises" is frozen design.md §2.1)
+        if log is not None:
+            log(f"longrun note failed: {exc}")
+        return False
 
 
 class NoteKeepalive:
@@ -47,18 +57,57 @@ class NoteKeepalive:
         log: Callable[[str], None] | None = None,
     ) -> None:
         """interval defaults to flow_node.runner.KEEPALIVE_INTERVAL_SECONDS."""
-        raise NotImplementedError
+        self._api = api
+        self._task_id = task_id
+        if interval is None:
+            # Lazy import (stubs.md note): no module-level coupling to flow_node.runner.
+            from flow_node.runner import KEEPALIVE_INTERVAL_SECONDS
+
+            interval = KEEPALIVE_INTERVAL_SECONDS
+        self._interval = float(interval)
+        self._message_prefix = message_prefix
+        self._log = log
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._initial_ok = False
+        self._count = 0
 
     def start(self, initial_message: str) -> bool:
         """Send the initial longrun note synchronously (fail-soft), then
         start the cadence thread. Returns initial note success. Idempotent."""
-        raise NotImplementedError
+        if self._thread is not None:
+            if self._log is not None:
+                self._log("keepalive already started — ignoring duplicate start()")
+            return self._initial_ok
+        ok = send_longrun_note(self._api, self._task_id, initial_message, self._log)
+        self._initial_ok = ok
+        if ok:
+            self._count += 1
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="note-keepalive")
+        self._thread.start()
+        return ok
 
     def stop(self) -> None:
         """Stop the cadence thread (idempotent, join with grace)."""
-        raise NotImplementedError
+        self._stop_event.set()
+        thread = self._thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=2.0)
 
     @property
     def sent_count(self) -> int:
         """Number of notes actually accepted (200)."""
-        raise NotImplementedError
+        return self._count
+
+    def _loop(self) -> None:
+        """Cadence loop: one fail-soft longrun note per interval until stopped."""
+        while not self._stop_event.wait(self._interval):
+            ok = send_longrun_note(
+                self._api,
+                self._task_id,
+                f"{self._message_prefix}: still working ({self._count})",
+                self._log,
+            )
+            if ok:
+                self._count += 1
