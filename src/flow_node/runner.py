@@ -3,11 +3,14 @@
 Implementiert Plan Task 4 + 4b (.hermes/plans/flow-run-mvp.md):
 fail-fast D6, D9-Plan-Retry, topologisches Parallel-Fan-out, Poll-Loop 5s
 mit exponentiellem Backoff, unabhängiger Lease-Keepalive (600s), Flow-Budget.
+Dazu T-002: Template-Interpolation ${ref.result.path} — Dateninjektion
+zwischen Flow-Tasks, aufgelöst beim Submit aus dem laufenden Aggregate.
 """
 from __future__ import annotations
 
 import json
 import math
+import re
 import time
 from typing import Any
 
@@ -35,7 +38,8 @@ _BACKOFF_FATAL_ERRORS = POLL_BACKOFF_MAX_ERRORS + math.ceil(
     math.log2(POLL_BACKOFF_MAX_SECONDS / POLL_INTERVAL_SECONDS)
 )
 
-# §2.3 PLAN_PROMPT-Template (FROZEN — bytegenau aus dem Plan übernommen). Platzhalter:
+# §2.3 PLAN_PROMPT-Template (FROZEN — bytegenau aus dem Plan übernommen; T-002
+# ergänzt den Datenweitergabe-Absatz). Platzhalter:
 # {task} und {capabilities_snapshot}. ACHTUNG: Die Plan-Schema-Zeile enthält LITERALE
 # JSON-Braces ({"version": 1, ...}) — eine naive str.format() über das ganze Template
 # würde dort brechen; Substitutions-Mechanik entscheidet Phase 3.
@@ -57,6 +61,11 @@ Plan-Schema:
 Regeln: ids eindeutig; depends_on nur auf existierende ids; keine Zyklen;
 Payload-Felder exakt wie im input_schema der Capability; halte die Zahl der
 Tasks minimal.
+
+Datenweitergabe: Payload-Werte dürfen Ergebnisse früherer Tasks über
+${ref.result.path} referenzieren (ref = Task-id, path = Dot-Path ins
+Resultat des referenzierten Tasks). Jeder referenzierte Task MUSS in
+depends_on stehen, sonst failt der Flow beim Submit.
 """
 
 
@@ -212,6 +221,86 @@ def _inject_flow(payload: dict, cap_info: dict | None, origin_task_id: str, task
     return child
 
 
+# ---- T-002: Template-Interpolation — Dateninjektion beim Submit -------------
+
+# Nur GENAU dieses Muster ist ein Template (keine Ausdrücke, Filter, Defaults):
+# ${<task_ref>.result.<dot-path>} — 'result' ist ein Literal-Segment.
+_TEMPLATE_PATTERN = r"\$\{([A-Za-z0-9_-]+)\.result\.([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)\}"
+TEMPLATE_RE = re.compile(_TEMPLATE_PATTERN)
+
+
+def _resolve_templates(payload: dict, aggregate: dict[str, Any]) -> dict:
+    """Löst ${ref.result.path}-Templates im Payload rekursiv auf (T-002):
+    dict-Values, List-Items, Strings.
+
+    Aggregate-Shape (Befund, verifiziert gegen _task_result + den Join-Loop):
+    Das Aggregate speichert unter task_ref das NACKTE Stage-Resultat
+    (`aggregate[task_ref] = _task_result(view)`, runner.py Join-Loop) —
+    KEIN Wrapper. Das Literal-Segment 'result' adressiert genau diesen
+    Eintrag, der Dot-Path danach navigiert im Resultat selbst:
+    ${img.result.artifact_id} → aggregate["img"]["artifact_id"].
+
+    Regeln (Plan T-002): String, der exakt EINEM Template entspricht →
+    nativer Wert (Typ bleibt erhalten); Template eingebettet in größerem
+    String → alle Treffer als str() substituieren (dict/list via
+    json.dumps); fehlender Task im Aggregate oder nicht auflösbarer Path →
+    FlowError (fail-fast D6) mit Template, referenziertem Task und
+    depends_on-Hinweis. Nur ${ref.result.path} ist ein Template — alles
+    andere bleibt literal.
+    """
+    return _resolve_templates_value(payload, aggregate)
+
+
+def _resolve_templates_value(value: Any, aggregate: dict[str, Any]) -> Any:
+    """Rekursion über dict-Values, List-Items; Strings werden aufgelöst."""
+    if isinstance(value, dict):
+        return {k: _resolve_templates_value(v, aggregate) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_resolve_templates_value(item, aggregate) for item in value]
+    if isinstance(value, str):
+        return _resolve_templates_string(value, aggregate)
+    return value
+
+
+def _resolve_templates_string(text: str, aggregate: dict[str, Any]) -> Any:
+    """Ein String: exakt EIN Template → nativer Wert; sonst alle Treffer als str()."""
+    if TEMPLATE_RE.search(text) is None:
+        return text
+    exact = TEMPLATE_RE.fullmatch(text)
+    if exact:
+        return _template_lookup(exact.group(1), exact.group(2), text, aggregate)
+    return TEMPLATE_RE.sub(
+        lambda m: _template_str(_template_lookup(m.group(1), m.group(2), m.group(0), aggregate)),
+        text,
+    )
+
+
+def _template_lookup(ref: str, path: str, template: str, aggregate: dict[str, Any]) -> Any:
+    """Löst ref + Dot-Path gegen das Aggregate auf — fail-fast D6 mit klarem
+    Grund: das Template, der referenzierte Task und der depends_on-Hinweis."""
+    if ref not in aggregate:
+        raise FlowError(
+            f"template {template} unresolved: task {ref!r} not in aggregate — "
+            f"add {ref!r} to depends_on"
+        )
+    node: Any = aggregate[ref]
+    for seg in path.split("."):
+        if not isinstance(node, dict) or seg not in node:
+            raise FlowError(
+                f"template {template} unresolved: path {path!r} not found in result of "
+                f"task {ref!r} — check the path and add {ref!r} to depends_on"
+            )
+        node = node[seg]
+    return node
+
+
+def _template_str(value: Any) -> str:
+    """Eingebettete Substitution: Skalare via str(), dict/list via json.dumps."""
+    if isinstance(value, (dict, list)):
+        return json.dumps(value)
+    return str(value)
+
+
 def _poll_task(api: RelayApi, task_id: str, tick) -> tuple[str, Any]:
     """Pollt EINEN Task bis done/failed (D5). tick() pro Runde: Budget + Keepalive.
 
@@ -262,8 +351,10 @@ def run(
          (Race Safety-Net).
       2. Topologisch: alle Tasks mit erfüllten deps gleichzeitig submitten (echtes
          Parallel-Fan-out), idempotency_key flow-<origin-task-id>-<task-id>.
-      3. Payload-Injection: 'flow': {origin_task_id, task_ref} — nur wenn das
-         input_schema der Capability es erlaubt, sonst weglassen.
+      3. Template-Auflösung ${ref.result.path} (T-002, Dateninjektion aus dem
+         laufenden Aggregate) + Payload-Injection: 'flow': {origin_task_id,
+         task_ref} — nur wenn das input_schema der Capability es erlaubt,
+         sonst weglassen.
       4. Poll-Loop 5s pro Kind; Keepalive-Note alle 600s unabhängig vom Poll-Takt:
          'flow progress: done=K/N' (Lease-Refresh am Ursprungs-Task, T-154).
       5. Kind failed (permanent) → gesamter Flow failt: Note 'flow failed at
@@ -362,9 +453,21 @@ def run(
             raise FlowError(f"plan phase failed: fan-out deadlock on {sorted(remaining)}")
         for tid in ready:
             t = remaining.pop(tid)
+            # T-002: Template-Auflösung VOR _inject_flow — flow-Metadaten kommen
+            # last und werden nie interpoliert. FlowError bekommt den betroffenen
+            # task_ref als Kontext (fail-fast D6: kein Submit, keine Nachfolger).
+            try:
+                resolved_payload = _resolve_templates(t.payload, aggregate)
+            except FlowError as e:
+                raise FlowError(f"task {tid!r}: {e}") from None
             resp = api.submit_simple_task(
                 capability=t.capability,
-                payload=_inject_flow(t.payload, caps_fresh.get(t.capability), origin_task_id, tid),
+                payload=_inject_flow(
+                    resolved_payload,
+                    caps_fresh.get(t.capability),
+                    origin_task_id,
+                    tid,
+                ),
                 name=f"{TASK_NAME_PREFIX}{plan.name}:{tid}",
                 idempotency_key=_idem(origin_task_id, tid),
             )

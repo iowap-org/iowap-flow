@@ -13,6 +13,9 @@ Design goals:
   (task-simple submit, task notes, task status, discovery).
 - **Fail-fast** - a permanently failed child fails the whole flow with a
   clear reason; the runner is deliberately non-creative.
+- **Data injection** - payload fields can reference earlier task results via
+  `${ref.result.path}` templates (T-002), resolved from the running aggregate
+  at submit time; every referenced task must be in `depends_on`.
 - **Long-run safe** - `long_run` capability profile + keepalive notes hold the
   origin stage lease for the entire flow duration.
 
