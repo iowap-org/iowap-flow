@@ -203,6 +203,12 @@ def test_invalid_plan_json_one_retry_with_feedback_then_fail(monkeypatch):
         run(api, {"task": "test"}, BASE, TOKEN, ORIGIN_TASK, ORIGIN_STAGE, NODE)
 
     assert len(submits) == 2  # genau 1 Retry (D9)
+    # D9-Retry braucht pro Attempt einen NEUEN Idempotency-Key — sonst liefert
+    # der Server dasselbe fertig-gefailte Planungs-Kind zurück (Live-Bug
+    # 2026-09-06) und der Feedback-Retry wäre tot.
+    assert submits[0]["idempotency_key"] == f"flow-{ORIGIN_TASK}-{PLAN_TASK_REF}"
+    assert submits[1]["idempotency_key"] == f"flow-{ORIGIN_TASK}-{PLAN_TASK_REF}-2"
+    assert submits[1]["name"] == "flow:_plan-2"
     # Retry-Prompt enthält das Validerings-Feedback aus Versuch 1
     assert "ungültig" in submits[1]["payload"]["task"]
     assert "no plan JSON object" in submits[1]["payload"]["task"]

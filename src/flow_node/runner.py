@@ -307,8 +307,14 @@ def run(
         resp = api.submit_simple_task(
             capability=PLAN_CAPABILITY,
             payload={"task": prompt},
-            name=f"{TASK_NAME_PREFIX}{PLAN_TASK_REF}",
-            idempotency_key=_idem(origin_task_id, PLAN_TASK_REF),
+            # D9-Retry braucht pro Attempt einen NEUEN Idempotency-Key: mit
+            # konstantem Key liefert der Server dasselbe, bereits fertig-
+            # gefailte Planungs-Kind zurück und der Feedback-Retry wäre tot
+            # (Live-Bug 2026-09-06). Attempt 1 behält die §2.5-Form — Resume
+            # nach Handler-Crash startet wieder bei Attempt 1 und findet das
+            # fertige Kind über den unveränderten Key.
+            name=f"{TASK_NAME_PREFIX}{PLAN_TASK_REF}{'' if attempt == 1 else f'-{attempt}'}",
+            idempotency_key=_idem(origin_task_id, PLAN_TASK_REF) + ("" if attempt == 1 else f"-{attempt}"),
         )
         planning_task_id = resp.get("task_id") or resp.get("stage_id")
         if not planning_task_id:
