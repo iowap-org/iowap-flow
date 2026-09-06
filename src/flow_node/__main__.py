@@ -38,7 +38,9 @@ def _fail(reason: str) -> SystemExit:
 
 def main() -> int:
     """Handler-Einstiegspunkt: stdin-Payload → Flow ausführen → stdout JSON."""
-    # stdin: {"task": ..., "options": {...}} (§2.4)
+    # stdin: {"task": ..., "original_request": ..., "options": {...}} (§2.4)
+    # Der Server übergibt das Stage-Payload wörtlich; die Capability-Doku
+    # schreibt 'original_request' vor, ältere Clients senden 'task'.
     try:
         raw = sys.stdin.read()
         payload = json.loads(raw) if raw.strip() else {}
@@ -46,7 +48,7 @@ def main() -> int:
         raise _fail(f"invalid stdin JSON: {e}") from e
     if not isinstance(payload, dict):
         raise _fail("stdin payload must be a JSON object")
-    if not payload.get("task"):
+    if not (payload.get("task") or payload.get("original_request")):
         raise _fail("flow payload missing 'task' (original request)")
 
     # env: Relay-Kontext vom handler_runner (§2.4) — Pflichtfelder

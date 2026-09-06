@@ -5,25 +5,42 @@ available=false gilt als „jetzt nicht ausführbar" → fail-fast, D6).
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import httpx
 
 from .plan import Plan, PlanError
+from .token_store import load_bearer_token
 
 
 def fetch_capabilities(base_url: str, token_file: str, timeout: float = 10.0) -> dict[str, dict]:
-    """GET /relay/v2/discovery/capabilities → {cap_name: {available: bool, nodes: [...]}}.
-    Endpoint ist offen (kein Bearer nötig); Token-Header wird gesetzt, falls vorhanden."""
+    """GET /relay/v2/discovery/capabilities → {cap_name: cap_obj}.
+
+    Server-Formate (beide unterstützt):
+    - {"capabilities": [{name, available, ...}, ...]}  (Liste, live belegt)
+    - {cap_name: {available, ...}, ...}                (altes dict-Format)
+    """
     headers = {}
-    token_path = __import__("pathlib").Path(token_file)
+    token_path = Path(token_file)
     if token_path.exists():
-        headers["Authorization"] = f"Bearer {token_path.read_text().strip()}"
+        token = load_bearer_token(token_path)
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
     r = httpx.get(f"{base_url.rstrip('/')}/relay/v2/discovery/capabilities",
                   headers=headers, timeout=timeout)
     r.raise_for_status()
     data = r.json()
-    caps = {}
-    for name, info in (data.get("capabilities") or data).items() if isinstance(data, dict) else []:
-        caps[name] = info if isinstance(info, dict) else {"available": bool(info)}
+    entries = data.get("capabilities", data) if isinstance(data, dict) else data
+    caps: dict[str, dict] = {}
+    if isinstance(entries, dict):
+        # Altes Format: name -> info (bool oder dict).
+        for name, info in entries.items():
+            caps[name] = info if isinstance(info, dict) else {"available": bool(info)}
+    elif isinstance(entries, list):
+        # Live-Format: Liste von Capability-Objekten mit "name".
+        for item in entries:
+            if isinstance(item, dict) and item.get("name"):
+                caps[str(item["name"])] = item
     return caps
 
 

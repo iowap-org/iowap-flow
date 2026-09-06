@@ -24,6 +24,8 @@ from typing import Any
 
 import httpx
 
+from .token_store import load_bearer_token
+
 
 class RelayApi:
     """HTTP-Fassade für alle Relay-Operationen des flow-Handlers (Task 3).
@@ -45,7 +47,7 @@ class RelayApi:
         headers: dict[str, str] = {}
         token_path = Path(self.token_file)
         if token_path.exists():
-            token = token_path.read_text().strip()
+            token = load_bearer_token(token_path)
             if token:
                 headers["Authorization"] = f"Bearer {token}"
         if with_json:

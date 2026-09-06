@@ -2,7 +2,7 @@
 
 node_name: flow-runner
 description: "Dummer Kanban — Orchestrator-Node (flow.run)"
-status: idle
+status: online
 
 capabilities:
   - name: flow.run
