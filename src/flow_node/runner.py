@@ -80,11 +80,13 @@ def build_plan_prompt(task: str, capabilities_snapshot: str) -> str:
 
 def extract_plan_json(result_text: str) -> dict:
     """Extrahiert lenient das Plan-JSON aus dem agent.ai-Result: erstes JSON-Objekt
-    mit 'tasks'-Array, rekursiv eine Ebene tief — NICHT freetext-Regex (Task 5).
+    mit 'tasks'-Array, rekursiv — NICHT freetext-Regex (Task 5).
 
-    Eine Ebene tief heißt: der ganze Text als JSON, plus JSON-Objekte in
-    Top-Level-Containern (dict-Werte / list-Items), wobei String-Werte noch
-    einmal JSON-geparst werden dürfen (z. B. {"result": "{...}"}).
+    Rekursiv heißt: der ganze Text als JSON, plus JSON-Objekte in verschachtelten
+    Containern und in String-Werten (String-Werte werden erneut JSON-geparst) —
+    z. B. {"result": "{...}"} oder die Live-Form 2026-09-06:
+    {"status": "completed", "result": {"answer": "<plan-json>"}} (T-172-Test,
+    alter Code schaute nur eine Ebene tief und fand den Plan nie).
     Fallback ohne Regex: erstes '{' bis letztes '}' des Texts.
     """
     direct = _try_json(result_text)
@@ -106,22 +108,35 @@ def _try_json(text: str) -> Any:
         return None
 
 
+_MAX_EXTRACT_DEPTH = 8
+
+
 def _candidate_objects(obj: Any):
-    """Yieldet alle dicts 'eine Ebene tief' (inkl. JSON in String-Werten)."""
-    if isinstance(obj, dict):
-        yield obj
-        values = obj.values()
-    elif isinstance(obj, list):
-        values = obj
-    else:
-        return
-    for v in values:
-        if isinstance(v, dict):
-            yield v
-        elif isinstance(v, str):
-            parsed = _try_json(v)
-            if isinstance(parsed, dict):
-                yield parsed
+    """Yieldet alle dicts im Result (rekursiv, Tiefen-Cap, Zyklusschutz) —
+    inkl. JSON, das in String-Werten steckt (wird erneut geparst)."""
+    seen: set[int] = set()
+
+    def walk(node: Any, depth: int):
+        if depth > _MAX_EXTRACT_DEPTH or id(node) in seen:
+            return
+        if isinstance(node, dict):
+            seen.add(id(node))
+            yield node
+            values = node.values()
+        elif isinstance(node, list):
+            seen.add(id(node))
+            values = node
+        elif isinstance(node, str):
+            parsed = _try_json(node)
+            if parsed is not None:
+                yield from walk(parsed, depth + 1)
+            return
+        else:
+            return
+        for v in values:
+            yield from walk(v, depth + 1)
+
+    yield from walk(obj, 0)
 
 
 def _idem(origin_task_id: str, task_ref: str) -> str:

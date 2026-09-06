@@ -117,6 +117,14 @@ def test_extract_plan_json_direct_and_one_level_deep():
     assert extract_plan_json(with_text)["name"] == "demo"
 
 
+def test_extract_plan_json_two_levels_deep_agent_ai():
+    """Live-Form (2026-09-06, TTL-300-Test): agent.ai-Antwort steckt zwei Ebenen
+    tief — {'status': ..., 'result': {'answer': '<plan-json-als-string>'}}.
+    Erwartung: gefunden statt 'no plan JSON object'."""
+    wrapped = {"status": "completed", "result": {"answer": json.dumps(PLAN)}}
+    assert extract_plan_json(json.dumps(wrapped))["name"] == "demo"
+
+
 def test_extract_plan_json_rejects_no_tasks_array():
     with pytest.raises(Exception, match="plan"):
         extract_plan_json(json.dumps({"foo": "bar"}))
