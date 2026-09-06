@@ -18,6 +18,9 @@ Design goals:
   at submit time; every referenced task must be in `depends_on`.
 - **Long-run safe** - `long_run` capability profile + keepalive notes hold the
   origin stage lease for the entire flow duration.
+- **Repo-tracked agent.ai handler** - `handlers/agent_ai.py` serves the
+  capability `agent.ai` (Hermes planner) and sends a T-154 longrun note right
+  after claim, with keepalive notes during the LLM call (T-001c).
 
 Built on [`iowap-node`](https://github.com/iowap-org/iowap-node) (pinned
 dependency) for the node daemon, relay client, and handler runner.
