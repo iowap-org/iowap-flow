@@ -1,9 +1,10 @@
-# .github/workflows/publish.yml — FROZEN Kontrakt (Plan Task 6, self-contained)
+# .github/workflows/publish.yml — manual dispatch only.
+# Image builds moved to iowap-org/iowap-docker (Build Docker Images workflow).
+# Kept as an escape hatch for emergency rebuilds from the source repo;
+# NOT triggered on push anymore.
 name: publish
 on:
-  push:
-    branches: [main]
-    tags: ["v*"]
+  workflow_dispatch:
 permissions:
   contents: read
   packages: write
