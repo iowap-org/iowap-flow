@@ -16,6 +16,17 @@ from typing import Any
 
 import httpx
 
+from .catalog import (
+    CatalogError,
+    cleanup_history,
+    load_flow,
+    record_history,
+    resolve_input_templates,
+    save_flow_from_history,
+)
+from .catalog import (
+    list_flows as list_catalog_flows,
+)
 from .discovery import fetch_capabilities, validate_capabilities_live
 from .plan import Plan, PlanError, parse_plan
 from .relay_api import RelayApi
@@ -341,6 +352,13 @@ def run(
 ) -> dict:
     """Führt den kompletten Flow aus: Plan-Phase → Validierung → Fan-out → Join → Aggregate.
 
+    T-003-Modi (payload['mode'], sauber getrennt vom Classic-Lauf):
+      - 'list_flows': Katalogabfrage (kein Plan-Kind, kein Fan-out).
+      - 'run_flow':   vorgefertigter Flow aus dem Katalog — überspringt die
+        Plan-Phase, ${input.path}-Parameter, sonst identischer Fan-out/Join.
+      - 'save_flow':  befördert einen Historie-Eintrag dauerhaft in den Katalog.
+    Ohne 'mode' (Default): klassischer Lauf (Plan-Phase via agent.ai, FROZEN).
+
     Semantik (Plan Task 4, fail-fast D6):
       0. Plan-Phase: Note 'longrun' 'flow started' → Discovery-Snapshot → PLAN_PROMPT →
          Planungs-Kind an agent.ai (idempotency_key flow-<origin>-_plan, Name
@@ -364,9 +382,49 @@ def run(
       7. Nach jeder Änderung am Fan-out-Zustand: Note kind=info am Ursprungs-Task.
     """
     options = options or {}
+    mode = payload.get("mode")
+
+    # -- T-003: sauber getrennte Modi (kein Plan-Kind, kein Fan-out) -----------
+    if mode == "list_flows":
+        caps = fetch_capabilities(base_url, token_file)
+        entries = list_catalog_flows(caps)
+        result = {"status": "completed", "mode": "list_flows", "flows": entries,
+                  "summary": f"{len(entries)} flows in catalog"}
+        api.complete_stage(origin_task_id, origin_stage_id, result)
+        return result
+    if mode == "save_flow":
+        try:
+            name = save_flow_from_history(str(payload.get("history_id") or ""))
+        except CatalogError as e:
+            msg = f"save_flow failed: {e}"
+            api.fail_stage(origin_task_id, origin_stage_id, msg)
+            raise FlowError(msg) from None
+        result = {"status": "completed", "mode": "save_flow",
+                  "flow": name, "summary": f"flow {name!r} saved to catalog"}
+        api.complete_stage(origin_task_id, origin_stage_id, result)
+        return result
+
     task_text = str(payload.get("task") or payload.get("original_request") or "")
-    if not task_text:
+    flow_input: dict[str, Any] | None = None
+    if mode == "run_flow":
+        raw_flow = payload.get("flow")
+        if not isinstance(raw_flow, str) or not raw_flow:
+            raise FlowError("run_flow payload missing 'flow' (catalog name)")
+        flow_input = payload.get("input") if isinstance(payload.get("input"), dict) else {}
+        # History-Cleanup fail-soft beim Flow-Start (beide Regeln: Alter + Anzahl)
+        try:
+            cleanup_history()
+        except OSError:
+            pass
+        try:
+            raw_plan = load_flow(raw_flow)
+        except CatalogError as e:
+            api.fail_stage(origin_task_id, origin_stage_id, str(e))
+            raise FlowError(str(e)) from None
+    elif not task_text:
         raise FlowError("flow payload missing 'task' (original request)")
+    if not task_text and mode == "run_flow":
+        task_text = f"run flow {raw_flow}"  # Notes/Naming-Grundlage
     max_flow_seconds = int(options.get("max_flow_seconds") or DEFAULT_MAX_FLOW_SECONDS)
 
     started = time.monotonic()
@@ -388,44 +446,73 @@ def run(
     caps = fetch_capabilities(base_url, token_file)
     plan: Plan | None = None
     feedback: str | None = None
-    for attempt in (1, 2):  # D9: 1 Retry mit Validerings-Fehler im Prompt
-        prompt = build_plan_prompt(task_text, _caps_snapshot(caps))
-        if feedback:
-            prompt += (
-                "\n\nDer letzte Plan-Versuch war ungültig. Fehler:\n"
-                f"{feedback}\nBehebe diesen Fehler und antworte erneut NUR mit dem Plan-JSON."
-            )
-        resp = api.submit_simple_task(
-            capability=PLAN_CAPABILITY,
-            payload={"task": prompt},
-            # D9-Retry braucht pro Attempt einen NEUEN Idempotency-Key: mit
-            # konstantem Key liefert der Server dasselbe, bereits fertig-
-            # gefailte Planungs-Kind zurück und der Feedback-Retry wäre tot
-            # (Live-Bug 2026-09-06). Attempt 1 behält die §2.5-Form — Resume
-            # nach Handler-Crash startet wieder bei Attempt 1 und findet das
-            # fertige Kind über den unveränderten Key.
-            name=f"{TASK_NAME_PREFIX}{PLAN_TASK_REF}{'' if attempt == 1 else f'-{attempt}'}",
-            idempotency_key=_idem(origin_task_id, PLAN_TASK_REF) + ("" if attempt == 1 else f"-{attempt}"),
-        )
-        planning_task_id = resp.get("task_id") or resp.get("stage_id")
-        if not planning_task_id:
-            raise FlowError("plan phase failed: planning submit returned no task id")
-        api.add_note(origin_task_id, "planning started", kind="longrun")
-        status, planning_result = _poll_task(
-            api, planning_task_id, lambda: tick("flow progress: planning")
-        )
-        if status == "failed":
-            feedback = f"planning child failed: {planning_result}"
-            api.add_note(origin_task_id, f"plan attempt {attempt} invalid: {feedback}", kind="info")
-            continue
+    if mode == "run_flow":
+        # T-003: vorgefertigter Flow — Plan-Phase entfällt, Input-Templates werden
+        # in eine Kopie des Payloads aufgelöst (Original-Katalog bleibt unverändert).
         try:
-            plan = parse_plan(extract_plan_json(_as_text(planning_result)))
-            break
-        except (PlanError, FlowError) as e:
-            feedback = str(e)
-            api.add_note(origin_task_id, f"plan attempt {attempt} invalid: {feedback}", kind="info")
-    if plan is None:
-        raise FlowError(f"plan phase failed: {feedback}")
+            plan = parse_plan(raw_plan)
+        except PlanError as e:
+            api.fail_stage(origin_task_id, origin_stage_id, f"run_flow: invalid catalog plan: {e}")
+            raise FlowError(f"run_flow: invalid catalog plan: {e}") from None
+        resolved = {}
+        for t in plan.tasks:
+            try:
+                resolved[t.id] = resolve_input_templates(dict(t.payload), flow_input or {})
+            except CatalogError as e:
+                msg = f"run_flow task {t.id!r}: {e}"
+                api.fail_stage(origin_task_id, origin_stage_id, msg)
+                raise FlowError(msg) from None
+        input_resolved_plan = {
+            "version": 1,
+            "name": plan.name,
+            "summary": plan.summary,
+            "tasks": [
+                {"id": t.id, "capability": t.capability,
+                 "payload": resolved[t.id], "depends_on": list(t.depends_on)}
+                for t in plan.tasks
+            ],
+        }
+        plan = parse_plan(input_resolved_plan)
+        api.add_note(origin_task_id, f"flow started from catalog: {plan.name}", kind="longrun")
+    else:
+        for attempt in (1, 2):  # D9: 1 Retry mit Validerings-Fehler im Prompt
+            prompt = build_plan_prompt(task_text, _caps_snapshot(caps))
+            if feedback:
+                prompt += (
+                    "\n\nDer letzte Plan-Versuch war ungültig. Fehler:\n"
+                    f"{feedback}\nBehebe diesen Fehler und antworte erneut NUR mit dem Plan-JSON."
+                )
+            resp = api.submit_simple_task(
+                capability=PLAN_CAPABILITY,
+                payload={"task": prompt},
+                # D9-Retry braucht pro Attempt einen NEUEN Idempotency-Key: mit
+                # konstantem Key liefert der Server dasselbe, bereits fertig-
+                # gefailte Planungs-Kind zurück und der Feedback-Retry wäre tot
+                # (Live-Bug 2026-09-06). Attempt 1 behält die §2.5-Form — Resume
+                # nach Handler-Crash startet wieder bei Attempt 1 und findet das
+                # fertige Kind über den unveränderten Key.
+                name=f"{TASK_NAME_PREFIX}{PLAN_TASK_REF}{'' if attempt == 1 else f'-{attempt}'}",
+                idempotency_key=_idem(origin_task_id, PLAN_TASK_REF) + ("" if attempt == 1 else f"-{attempt}"),
+            )
+            planning_task_id = resp.get("task_id") or resp.get("stage_id")
+            if not planning_task_id:
+                raise FlowError("plan phase failed: planning submit returned no task id")
+            api.add_note(origin_task_id, "planning started", kind="longrun")
+            status, planning_result = _poll_task(
+                api, planning_task_id, lambda: tick("flow progress: planning")
+            )
+            if status == "failed":
+                feedback = f"planning child failed: {planning_result}"
+                api.add_note(origin_task_id, f"plan attempt {attempt} invalid: {feedback}", kind="info")
+                continue
+            try:
+                plan = parse_plan(extract_plan_json(_as_text(planning_result)))
+                break
+            except (PlanError, FlowError) as e:
+                feedback = str(e)
+                api.add_note(origin_task_id, f"plan attempt {attempt} invalid: {feedback}", kind="info")
+        if plan is None:
+            raise FlowError(f"plan phase failed: {feedback}")
 
     # -- Phase 1: Live-Validierung gegen FRISCHEN Snapshot (Race Safety-Net) --
     caps_fresh = fetch_capabilities(base_url, token_file)
@@ -523,4 +610,25 @@ def run(
         "summary": plan.summary,
     }
     api.complete_stage(origin_task_id, origin_stage_id, result)
+    # T-003: erfolgreiche Läufe (klassisch UND run_flow) landen in der Historie —
+    # fail-soft: History-Ausfall failt den abgeschlossenen Flow nie.
+    try:
+        history_id = record_history(
+            flow_name=plan.name,
+            plan={
+                "version": 1,
+                "name": plan.name,
+                "summary": plan.summary,
+                "tasks": [
+                    {"id": t.id, "capability": t.capability,
+                     "payload": dict(t.payload), "depends_on": list(t.depends_on)}
+                    for t in plan.tasks
+                ],
+            },
+            aggregate=aggregate,
+            origin_task_id=origin_task_id,
+        )
+        api.add_note(origin_task_id, f"flow recorded in history: {history_id}", kind="info")
+    except OSError:
+        pass
     return result

@@ -48,7 +48,12 @@ def main() -> int:
         raise _fail(f"invalid stdin JSON: {e}") from e
     if not isinstance(payload, dict):
         raise _fail("stdin payload must be a JSON object")
-    if not (payload.get("task") or payload.get("original_request")):
+    # T-003: list_flows/save_flow brauchen kein 'task'; run_flow auch nicht
+    # (der Runner setzt task_text selbst). Klassischer Lauf bleibt Pflichtfeld.
+    mode = payload.get("mode")
+    if mode not in ("list_flows", "run_flow", "save_flow") and not (
+        payload.get("task") or payload.get("original_request")
+    ):
         raise _fail("flow payload missing 'task' (original request)")
 
     # env: Relay-Kontext vom handler_runner (§2.4) — Pflichtfelder
