@@ -12,3 +12,6 @@ dist/
 
 # Board symlink (local-only)
 board
+# T-003: Laufzeit-Artefakte (Katalog ist templates/, Historie ist nicht dauerhaft)
+history/
+agent-runs/
