@@ -193,13 +193,23 @@ def _task_error(view: dict) -> str:
 
 
 def _caps_snapshot(caps: dict[str, dict]) -> str:
-    """Kompakter, lesbarer Capability-Snapshot für den PLAN_PROMPT."""
+    """Kompakter, lesbarer Capability-Snapshot für den PLAN_PROMPT.
+
+    T-004 (iowap-flow): enthält `result_path_hints` (dot-paths ins Ergebnis),
+    damit der Planner beim Datenweitergabe-Muster ${ref.result.path} valide
+    Pfade kennt und nicht raten muss.
+    """
     if not caps:
         return "(keine Capabilities verfügbar)"
-    return "\n".join(
-        f"- {name} (available: {bool((caps.get(name) or {}).get('available', False))})"
-        for name in sorted(caps)
-    )
+    lines: list[str] = []
+    for name in sorted(caps):
+        cap = caps.get(name) or {}
+        line = f"- {name} (available: {bool(cap.get('available', False))})"
+        hints = cap.get("result_path_hints")
+        if isinstance(hints, list) and hints:
+            line += f" result paths: {', '.join(str(h) for h in hints)}"
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def _as_text(value: Any) -> str:
