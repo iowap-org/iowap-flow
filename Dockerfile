@@ -19,6 +19,10 @@ COPY handlers ./handlers
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh && useradd --create-home --uid 1000 appuser
 ENV HOME=/home/appuser
+# Deployment-Konvention (wie base/storage-Images, T-148a):
+#   1. NODE_NAME — frei setzbar pro Deployment (Default: Container-Hostname)
+#   2. RELAY_URL — Relay-Basis-URL (mDNS-Fallback im entrypoint.sh, falls unset)
+# Keine ENV-Defaults hier, damit der Name pro Deployment bewusst gewählt wird.
 # Entrypoint startet als root (chown des Volumes beim ersten Start, Pitfall #21)
 # und droppt selbst per setpriv auf appuser.
 USER root
