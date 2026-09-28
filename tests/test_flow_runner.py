@@ -113,6 +113,15 @@ def test_extract_plan_json_direct_and_one_level_deep():
     assert extract_plan_json(json.dumps(PLAN))["name"] == "demo"
     assert extract_plan_json(json.dumps({"result": PLAN}))["name"] == "demo"
     assert extract_plan_json(json.dumps({"result": json.dumps(PLAN)}))["name"] == "demo"
+
+
+def test_extract_plan_json_fenced_answer():
+    # agent.ai antwortet mitunter mit ```json-Fences (Live-Befund 2026-09-28):
+    # der Plan steckt als fenced String im answer-Feld.
+    fenced = '```json\n' + json.dumps(PLAN) + '\n```'
+    assert extract_plan_json(json.dumps({"result": {"answer": fenced}}))["name"] == "demo"
+    # Auch plain fenced (ohne JSON-Wrapper drum herum).
+    assert extract_plan_json(fenced)["name"] == "demo"
     with_text = f"Vorrede\n{json.dumps(PLAN)}\nNachrede"
     assert extract_plan_json(with_text)["name"] == "demo"
 

@@ -121,7 +121,20 @@ def extract_plan_json(result_text: str) -> dict:
     raise FlowError("plan phase failed: no plan JSON object with 'tasks' array in planning result")
 
 
+def _strip_code_fences(text: str) -> str:
+    """Entfernt Markdown-Code-Fences (```json ... ``` / ``` ... ```), falls
+    vorhanden — agent.ai antwortet mitunter fenced (Live-Befund 2026-09-28:
+    Plan-Phase failt, weil _try_json an den Fences scheitert)."""
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        first_nl = stripped.find("\n")
+        if first_nl != -1 and stripped.rstrip().endswith("```"):
+            stripped = stripped[first_nl + 1 : stripped.rstrip().rfind("```")]
+    return stripped
+
+
 def _try_json(text: str) -> Any:
+    text = _strip_code_fences(text)
     try:
         return json.loads(text)
     except (json.JSONDecodeError, TypeError):
