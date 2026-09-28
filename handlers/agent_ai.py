@@ -73,6 +73,13 @@ def main() -> int:
     except json.JSONDecodeError:
         parsed = {}
     payload = parsed if isinstance(parsed, dict) else {}
+    # T-005d: strip the Request Envelope {task_id, capability, input} —
+    # handler_runner >=2.3.13 sends strict stdin; older daemons send flat
+    # or mirrored payloads (all three end up in PROMPT_KEYS below).
+    if (payload.get("task_id") is not None
+            and payload.get("capability") is not None
+            and isinstance(payload.get("input"), dict)):
+        payload = payload["input"]
 
     task_id = os.environ.get("RELAY_TASK_ID", "")
     stage_id = os.environ.get("RELAY_STAGE_ID", "")
