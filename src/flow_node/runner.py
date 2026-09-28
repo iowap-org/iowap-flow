@@ -75,7 +75,9 @@ Tasks minimal.
 
 Datenweitergabe: Payload-Werte dürfen Ergebnisse früherer Tasks über
 ${ref.result.path} referenzieren (ref = Task-id, path = Dot-Path ins
-Resultat des referenzierten Tasks). Jeder referenzierte Task MUSS in
+Resultat des referenzierten Tasks). Die path-Segmente sind die Feldnamen
+des Capability-Resultats — pro Capability als 'result paths' im
+Capabilities-Snapshot gelistet. Jeder referenzierte Task MUSS in
 depends_on stehen, sonst failt der Flow beim Submit.
 """
 
@@ -178,10 +180,29 @@ def _idem(origin_task_id: str, task_ref: str) -> str:
 
 
 def _task_result(view: dict) -> Any:
-    """Extrahiert das Result aus einem TaskView: erstes Stage-Result mit Inhalt."""
+    """Extrahiert das Result aus einem TaskView: erstes Stage-Result mit Inhalt.
+
+    T-005c (Envelope-Contract, design.md T-005a §2.2/§4.1): Der Handler-Result-
+    Envelope wird EXAKT EINMAL unwrappt — {"status": "completed", "result": X}
+    → X. Bare Results (legacy Nodes) bleiben unverändert (tolerant, bis die
+    ganze Fleet migriert ist). Genau-einmal-Gatter (D7): unwrappt NUR bei
+    dict + status == "completed" + inneres result ist dict; alles andere
+    (nackte Results, Error-Shapes, bare dicts mit status/result-Keys) geht
+    ungeändert durch. Idempotent per Konstruktion — aggregate[task_ref] hält
+    danach in BEIDEN Fällen das Resultat-Objekt, d. h. ${ref.result.path}
+    navigiert relative zum inneren result: ${img.result.artifact_id} →
+    aggregate["img"]["artifact_id"].
+    """
     for stage in view.get("stages") or []:
         if stage.get("result") is not None:
-            return stage["result"]
+            result = stage["result"]
+            if (
+                isinstance(result, dict)
+                and result.get("status") == "completed"
+                and isinstance(result.get("result"), dict)
+            ):
+                return result["result"]
+            return result
     return None
 
 
@@ -211,6 +232,10 @@ def _caps_snapshot(caps: dict[str, dict]) -> str:
     T-004 (iowap-flow): enthält `result_path_hints` (dot-paths ins Ergebnis),
     damit der Planner beim Datenweitergabe-Muster ${ref.result.path} valide
     Pfade kennt und nicht raten muss.
+    T-005c: Hints sind Pfade RELATIV ZUM INNERNEN result des Handler-Result-
+    Envelopes (design.md T-005a §4.2) — also die Feldnamen dessen, was flow
+    nach dem Unwrap-once unter aggregate[task_ref] ablegt; der Planner baut
+    daraus valide ${ref.result.<hint>}-Templates.
     """
     if not caps:
         return "(keine Capabilities verfügbar)"
@@ -267,12 +292,16 @@ def _resolve_templates(payload: dict, aggregate: dict[str, Any]) -> dict:
     """Löst ${ref.result.path}-Templates im Payload rekursiv auf (T-002):
     dict-Values, List-Items, Strings.
 
-    Aggregate-Shape (Befund, verifiziert gegen _task_result + den Join-Loop):
+    Aggregate-Shape (T-005c, verifiziert gegen _task_result + den Join-Loop):
     Das Aggregate speichert unter task_ref das NACKTE Stage-Resultat
     (`aggregate[task_ref] = _task_result(view)`, runner.py Join-Loop) —
-    KEIN Wrapper. Das Literal-Segment 'result' adressiert genau diesen
-    Eintrag, der Dot-Path danach navigiert im Resultat selbst:
-    ${img.result.artifact_id} → aggregate["img"]["artifact_id"].
+    KEIN Wrapper. Der Handler-Result-Envelope (design.md T-005a §2.2) wird
+    von _task_result EXAKT EINMAL unwrappt (tolerant: bare Results legacy
+    Nodes gehen unverändert durch) — das Literal-Segment 'result' adressiert
+    genau diesen Aggregate-Eintrag, der Dot-Path danach navigiert im inneren
+    Resultat: ${img.result.artifact_id} → aggregate["img"]["artifact_id"].
+    result_path_hints sind folgerichtig Pfade relativ zum inneren result
+    (z. B. 'answer', NICHT 'result.answer').
 
     Regeln (Plan T-002): String, der exakt EINEM Template entspricht →
     nativer Wert (Typ bleibt erhalten); Template eingebettet in größerem

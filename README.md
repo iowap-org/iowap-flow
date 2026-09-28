@@ -15,7 +15,15 @@ Design goals:
   clear reason; the runner is deliberately non-creative.
 - **Data injection** - payload fields can reference earlier task results via
   `${ref.result.path}` templates (T-002), resolved from the running aggregate
-  at submit time; every referenced task must be in `depends_on`.
+  at submit time; every referenced task must be in `depends_on`. The `path`
+  segments are the field names of the capability's result - listed per
+  capability as result paths in the capabilities snapshot (T-005c: paths are
+  relative to the handler result envelope's inner `result` object).
+
+  Example: a `chat.ai` task `t1` (hints `["answer"]`) followed by a task
+  whose payload reads `{"summary": "${t1.result.answer}"}` - after flow
+  unwraps the handler result envelope exactly once, the template resolves to
+  `aggregate["t1"]["answer"]`, the chat answer itself.
 - **Long-run safe** - `long_run` capability profile + keepalive notes hold the
   origin stage lease for the entire flow duration.
 - **Repo-tracked agent.ai handler** - `handlers/agent_ai.py` serves the
