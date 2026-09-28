@@ -157,9 +157,9 @@ def test_handler_completes_happy_path(fake_relay, tmp_path):
     assert proc.returncode == 0, f"stderr: {proc.stderr}"
     result = json.loads(proc.stdout)
     assert result["status"] == "completed"
-    assert result["flow"]["name"] == "demo"
-    assert result["flow"]["tasks_done"] == 1
-    assert "aggregate" in result and "summary" in result
+    assert result["result"]["flow"]["name"] == "demo"
+    assert result["result"]["flow"]["tasks_done"] == 1
+    assert "aggregate" in result["result"] and "summary" in result["result"]
 
 
 def test_stdout_contains_only_final_result_json(fake_relay, tmp_path):
@@ -174,7 +174,8 @@ def test_stdout_contains_only_final_result_json(fake_relay, tmp_path):
     assert proc.stdout.count("\n") == 1 and proc.stdout.endswith("\n")
     result = json.loads(proc.stdout)
     assert result["status"] == "completed"
-    assert set(result) == {"status", "flow", "aggregate", "summary"}
+    assert set(result) == {"status", "result"}
+    assert set(result["result"]) == {"flow", "aggregate", "summary"}
 
 
 def test_plan_phase_failure_exits_1_with_reason_on_stderr(tmp_path):

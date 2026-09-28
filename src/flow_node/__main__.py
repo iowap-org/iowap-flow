@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
 """Handler-Einstiegspunkt für flow.run (T-172, Plan Task 5).
 
-stdin/stdout-Contract gemäß handler_runner (Plan §2.4):
-  stdin:  Payload {"task": "<die Aufgabe, wörtlich>", "options": {...optional}}
+stdin/stdout-Contract gemäß handler_runner (Plan §2.4, T-005d):
+  stdin:  Request Envelope (T-005b) als JSON-String —
+          {"task_id": ..., "capability": ..., "input": {...payload...}}
+          (ältere Daemons senden den Payload flat oder mirrored — run()
+          akzeptiert alle drei Generationen). payload = input enthält den
+          Dispatcher-Payload: "task" oder {"mode": "run_flow", "flow": ...}.
   env:    RELAY_BASE_URL, RELAY_TOKEN_FILE, RELAY_STAGE_ID, RELAY_TASK_ID,
           RELAY_NODE_ID (geliefert von iowap-node handler_runner)
   stdout: NUR das finale JSON-Result (kein Logging auf stdout!)
-          Erfolg:  {"status": "completed", "flow": {...}, "aggregate": ..., "summary": ...}
+          Erfolg:  {"status": "completed", "result": {"flow": {...},
+                   "aggregate": ..., "summary": ...}} (Response Envelope,
+                   T-005d; ohne "error"-Key — der Daemon zählt Failures via
+                   Key-Präsenz)
   Fehler:  exit 1 + Grund auf stderr (flow.run failt die Stage mit exit 1 +
           stderr-Grund, damit der Server-Retry-Pfad greift — Plan §2.4).
 

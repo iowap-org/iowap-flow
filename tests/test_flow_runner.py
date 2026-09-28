@@ -178,8 +178,8 @@ def test_planning_child_submitted_first_and_plan_extracted_lenient(monkeypatch):
     simple_posts = [c for c in calls if c[1] == "/relay/v2/scheduler/task-simple"]
     assert simple_posts[0][0] == "POST" and len(simple_posts) == 3  # _plan, a, b
     assert result["status"] == "completed"
-    assert result["aggregate"] == {"a": {"done": "child-flow:demo:a"}, "b": {"done": "child-flow:demo:b"}}
-    assert result["summary"] == "s"
+    assert result["result"]["aggregate"] == {"a": {"done": "child-flow:demo:a"}, "b": {"done": "child-flow:demo:b"}}
+    assert result["result"]["summary"] == "s"
 
 
 def test_invalid_plan_json_one_retry_with_feedback_then_fail(monkeypatch):
@@ -272,7 +272,7 @@ def test_parallel_roots_and_join_submit_order_respects_deps(monkeypatch):
     result = run(api, {"task": "t"}, BASE, TOKEN, ORIGIN_TASK, ORIGIN_STAGE, NODE)
 
     assert submitted == ["flow:j:r1", "flow:j:r2", "flow:j:join"]
-    assert set(result["aggregate"].keys()) == {"r1", "r2", "join"}
+    assert set(result["result"]["aggregate"].keys()) == {"r1", "r2", "join"}
 
 
 def test_child_failed_is_fail_fast_no_successor_submit(monkeypatch):
@@ -389,8 +389,8 @@ def test_join_completes_origin_stage_with_aggregate(monkeypatch):
     body = completes[0]
     assert body["task_id"] == ORIGIN_TASK
     assert body["result"]["status"] == "completed"
-    assert body["result"]["aggregate"] == {"a": {"out": "flow:demo:a"}, "b": {"out": "flow:demo:b"}}
-    assert body["result"]["summary"] == "s"
+    assert body["result"]["result"]["aggregate"] == {"a": {"out": "flow:demo:a"}, "b": {"out": "flow:demo:b"}}
+    assert body["result"]["result"]["summary"] == "s"
     assert result["status"] == "completed"
 
 

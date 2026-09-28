@@ -392,6 +392,33 @@ def _poll_task(api: RelayApi, task_id: str, tick) -> tuple[str, Any]:
         time.sleep(POLL_INTERVAL_SECONDS)
 
 
+def _envelope_payload(payload: dict) -> dict:
+    """T-005d: strip the Request Envelope (T-005a design.md §3.2) if present.
+
+    The flow capability's stdin comes from the node's handler_runner, which
+    has THREE live generations in the fleet:
+      - pre-T-005b (iowap-node ≤2.3.9, flow-runner-01 today): flat payload
+        dict → returned unchanged;
+      - rollout (2.3.12): mirrored envelope — contract keys AND payload keys
+        at top level → contract keys win (they cannot occur in a flow
+        payload);
+      - strict (≥2.3.13): {"task_id", "capability", "input": {...}}.
+
+    Discriminator: "task_id"+"capability" present AND "input" is a mapping.
+    Mode bookkeeping ("mode"/"flow"/"history_id"/"input") stays wherever the
+    dispatcher put it — for mirrored/strict stdin that is INSIDE `input`
+    (the dispatcher wraps its whole task payload), for flat stdin at the
+    top level; both are read uniformly after this strip.
+    """
+    if (
+        payload.get("task_id") is not None
+        and payload.get("capability") is not None
+        and isinstance(payload.get("input"), dict)
+    ):
+        return payload["input"]
+    return payload
+
+
 def run(
     api: RelayApi,
     payload: dict,
@@ -434,14 +461,22 @@ def run(
       7. Nach jeder Änderung am Fan-out-Zustand: Note kind=info am Ursprungs-Task.
     """
     options = options or {}
+    # T-005d: accept all three handler_runner generations (strict/mirrored/
+    # flat — see _envelope_payload); payload now carries the dispatcher's
+    # task payload uniformly.
+    payload = _envelope_payload(payload)
     mode = payload.get("mode")
 
     # -- T-003: sauber getrennte Modi (kein Plan-Kind, kein Fan-out) -----------
     if mode == "list_flows":
         caps = fetch_capabilities(base_url, token_file)
         entries = list_catalog_flows(caps)
-        result = {"status": "completed", "mode": "list_flows", "flows": entries,
-                  "summary": f"{len(entries)} flows in catalog"}
+        # T-005d: conforming Response Envelope — payload under "result"
+        # (handler_runner ≥2.3.12 would otherwise fail "completed missing
+        # result"); NO "error" key (daemon counts failures by key presence).
+        result = {"status": "completed",
+                  "result": {"mode": "list_flows", "flows": entries,
+                             "summary": f"{len(entries)} flows in catalog"}}
         api.complete_stage(origin_task_id, origin_stage_id, result)
         return result
     if mode == "save_flow":
@@ -451,8 +486,11 @@ def run(
             msg = f"save_flow failed: {e}"
             api.fail_stage(origin_task_id, origin_stage_id, msg)
             raise FlowError(msg) from None
-        result = {"status": "completed", "mode": "save_flow",
-                  "flow": name, "summary": f"flow {name!r} saved to catalog"}
+        # T-005d: conforming Response Envelope — payload under "result",
+        # no "error" key (daemon counts failures by key presence).
+        result = {"status": "completed",
+                  "result": {"mode": "save_flow", "flow": name,
+                             "summary": f"flow {name!r} saved to catalog"}}
         api.complete_stage(origin_task_id, origin_stage_id, result)
         return result
 
@@ -655,11 +693,20 @@ def run(
             time.sleep(POLL_INTERVAL_SECONDS)
 
     # -- Phase 6: Aggregate + Complete am Ursprungs-Stage --
+    # T-005d: conforming Response Envelope — flow/aggregate/summary move
+    # under "result" (design.md §6; the old flat shape collided with the
+    # contract → normalize error "completed without result"). The "error"
+    # key is deliberately OMITTED: the daemon counts stage failures via
+    # "error" in result (key presence) — a literal "error": null would
+    # count every successful flow run as a failure. Same rationale as
+    # T-005a deviation D4.
     result = {
         "status": "completed",
-        "flow": {"name": plan.name, "tasks_done": total},
-        "aggregate": aggregate,
-        "summary": plan.summary,
+        "result": {
+            "flow": {"name": plan.name, "tasks_done": total},
+            "aggregate": aggregate,
+            "summary": plan.summary,
+        },
     }
     api.complete_stage(origin_task_id, origin_stage_id, result)
     # T-003: erfolgreiche Läufe (klassisch UND run_flow) landen in der Historie —

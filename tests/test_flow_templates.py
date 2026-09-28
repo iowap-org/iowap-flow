@@ -250,7 +250,7 @@ def test_image_storage_flow_resolves_template_at_submit(monkeypatch):
     # flow-Metadaten kamen LAST — Template-Auflösung lief nie über sie
     assert storage["flow"] == {"origin_task_id": ORIGIN_TASK, "task_ref": "storage"}
     assert result["status"] == "completed"
-    assert result["aggregate"] == {
+    assert result["result"]["aggregate"] == {
         "img": {"artifact_id": "art-7f3", "count": 2},
         "storage": {"stored": True},
     }

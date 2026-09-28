@@ -49,8 +49,8 @@ def test_list_flows_completes_without_plan_child(monkeypatch, tmp_path):
     api = RelayApi(BASE, TOKEN)
     result = _run_flow(api, {"mode": "list_flows"}, monkeypatch, tmp_path)
     assert result["status"] == "completed"
-    assert result["flows"][0]["name"] == "demo"
-    assert result["flows"][0]["available"] is True
+    assert result["result"]["flows"][0]["name"] == "demo"
+    assert result["result"]["flows"][0]["available"] is True
     assert not any("tasks" in u and "submit" in u for _, u in seen)  # kein Kind submitted
 
 
@@ -71,7 +71,7 @@ def test_save_flow_completes_from_history(monkeypatch, tmp_path):
 
     result = _run_flow(api, {"mode": "save_flow", "history_id": hid}, monkeypatch, tmp_path)
     assert result["status"] == "completed"
-    assert result["flow"] == "demo"
+    assert result["result"]["flow"] == "demo"
     assert load_history_record(hid)["history_id"] == hid  # Historie bleibt (Cleanup räumt später)
 
 

@@ -206,7 +206,7 @@ def test_template_resolution_end_to_end_with_envelope(monkeypatch):
     assert result["status"] == "completed"
     # Aggregate enthält die ENTHÜLLTEN Resultate — für Envelope- und Bare-Kinder
     # identisch (das ist der Normalisierungs-Effekt des Unwrap-once):
-    assert result["aggregate"] == {
+    assert result["result"]["aggregate"] == {
         "img": {"artifact_id": "art-env1", "count": 2},
         "storage": {"stored": True},
     }
@@ -279,7 +279,7 @@ def test_template_resolution_end_to_end_bare_still_works(monkeypatch):
     result = run(api, {"task": "t"}, BASE, TOKEN, ORIGIN_TASK, ORIGIN_STAGE, NODE)
 
     assert submits["flow:bare-chain:storage"]["payload"]["artifact_id"] == "art-bare"
-    assert result["aggregate"]["img"] == {"artifact_id": "art-bare"}
+    assert result["result"]["aggregate"]["img"] == {"artifact_id": "art-bare"}
 
 
 def test_unwrap_keeps_fail_fast_for_stale_aggregate_relative_paths():
