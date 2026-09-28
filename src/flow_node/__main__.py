@@ -29,7 +29,7 @@ import sys
 
 from flow_node.plan import PlanError
 from flow_node.relay_api import RelayApi
-from flow_node.runner import FlowError, run
+from flow_node.runner import FlowError, _envelope_payload, run
 
 
 def _log(msg: str) -> None:
@@ -55,6 +55,12 @@ def main() -> int:
         raise _fail(f"invalid stdin JSON: {e}") from e
     if not isinstance(payload, dict):
         raise _fail("stdin payload must be a JSON object")
+    # T-005d: strip the Request Envelope BEFORE the T-003 gate — the gate
+    # inspects the dispatcher's task payload ('task'/'original_request'/
+    # 'mode'), which for strict stdin lives inside 'input'. Same three-
+    # generation discriminator the runner applies in run() (design.md §6);
+    # stripping here keeps run()'s own call idempotent.
+    payload = _envelope_payload(payload)
     # T-003: list_flows/save_flow brauchen kein 'task'; run_flow auch nicht
     # (der Runner setzt task_text selbst). Klassischer Lauf bleibt Pflichtfeld.
     mode = payload.get("mode")
