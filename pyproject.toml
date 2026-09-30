@@ -3,7 +3,7 @@ name = "iowap-flow"
 version = "0.1.0"
 description = "IOWAP Flow Runner - plan/fan-out/join orchestrator node (dumb Kanban) for the IOWAP relay cluster"
 readme = "README.md"
-license = "AGPL-3.0-only"
+license = "MIT"
 requires-python = ">=3.11"
 dependencies = [
     "iowap-node @ git+https://github.com/iowap-org/iowap-node.git@wheel-v2.3.15",

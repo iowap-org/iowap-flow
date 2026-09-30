@@ -35,3 +35,7 @@ dependency) for the node daemon, relay client, and handler runner.
 
 Status: in development (T-172). See `docs/` in the iowap-server repo for the
 concept once published.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
