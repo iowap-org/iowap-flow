@@ -250,3 +250,81 @@ def test_extract_prompt_order() -> None:
         assert agent_ai.extract_prompt({"other": "x"}) == '{"other": "x"}'
     finally:
         sys.path.pop(0)
+
+# ---------------------------------------------------------------------------
+# T-182: Default hermes resolution — PATH lookup, no hardcoded home path
+# ---------------------------------------------------------------------------
+
+
+def test_default_hermes_bin_resolves_from_path(monkeypatch, tmp_path) -> None:
+    """T-182: ohne HERMES_BIN wird `hermes` via PATH aufgelöst, kein /home-Fallback."""
+    sys.path.insert(0, str(REPO_ROOT / "handlers"))
+    monkeypatch.delenv("HERMES_BIN", raising=False)
+    monkeypatch.setenv("PATH", str(tmp_path))  # only tmp_path on PATH
+    fake = tmp_path / "hermes"
+    fake.write_text("#!/bin/sh\necho hi\n")
+    fake.chmod(0o755)
+    try:
+        import agent_ai
+
+        assert agent_ai.DEFAULT_HERMES_BIN == "hermes"
+        assert agent_ai._resolve_hermes_bin() == str(fake)
+    finally:
+        sys.path.pop(0)
+
+
+def test_default_hermes_bin_missing_env(monkeypatch, tmp_path) -> None:
+    """T-182: kein hermes auf PATH → None (Fail-fast-Kandidat, kein Home-Guess)."""
+    sys.path.insert(0, str(REPO_ROOT / "handlers"))
+    monkeypatch.delenv("HERMES_BIN", raising=False)
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    (tmp_path / "empty").mkdir()
+    try:
+        import agent_ai
+
+        assert agent_ai._resolve_hermes_bin() is None
+    finally:
+        sys.path.pop(0)
+
+
+def test_handler_missing_hermes_bin_fails_fast(tmp_path) -> None:
+    """T-182: HERMES_BIN unset + kein hermes auf PATH → status=error, sauberes
+    JSON (kein Crash, kein /home-Guess)."""
+    server = HTTPServer(("127.0.0.1", 0), _FakeRelay)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        env = _relay_env(tmp_path, server.server_address[1])
+        env["PATH"] = str(tmp_path / "empty")
+        (tmp_path / "empty").mkdir(exist_ok=True)
+        env_no_hermes = {k: v for k, v in env.items()}
+        # _run_handler setzt HERMES_BIN immer — hier manuell ausführen
+        proc = subprocess.run(
+            [sys.executable, str(HANDLER)],
+            input=json.dumps({"task": "plan"}),
+            capture_output=True,
+            text=True,
+            env={
+                "PATH": str(tmp_path / "empty"),
+                "HOME": os.environ.get("HOME", "/tmp"),
+                "PYTHONPATH": str(REPO_ROOT / "src"),
+                **env_no_hermes,
+            },
+            timeout=60,
+            cwd=REPO_ROOT,
+            check=False,
+        )
+        assert proc.returncode == 0  # D7: exit 0 auch im Fehlerfall
+        result = json.loads(proc.stdout)
+        assert result["status"] == "error"
+        assert "hermes" in result["error"].lower()
+    finally:
+        server.shutdown()
+
+
+def test_module_contains_no_home_paths() -> None:
+    """T-182: das Modul führt keine Home-Verzeichnis-Pfade mehr als Literale."""
+    import agent_ai
+
+    source = Path(agent_ai.__file__).read_text()
+    assert "/home/" not in source
+    assert "/Users/" not in source

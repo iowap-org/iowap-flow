@@ -10,7 +10,7 @@ hermes-handler.py, modulo die dokumentierten Abweichungen D6/D7 in
   stdin : Stage-Payload als JSON-Objekt
   env   : RELAY_BASE_URL, RELAY_TOKEN_FILE, RELAY_TASK_ID, RELAY_STAGE_ID,
           RELAY_NODE_ID, RELAY_CAPABILITY  (handler_runner setzt immer)
-          HERMES_BIN (default /home/felix/.local/bin/hermes)
+          HERMES_BIN (optional — override; Default: `hermes` via PATH, T-182)
           HERMES_TIMEOUT (default 280 Sekunden)
           AGENT_AI_KEEPALIVE_INTERVAL_SECONDS (optional float, Tests)
   stdout: NUR das finale JSON-Result (Logging → stderr)
@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -38,7 +39,7 @@ import time
 from flow_node.keepalive import NoteKeepalive
 from flow_node.relay_api import RelayApi
 
-DEFAULT_HERMES_BIN = "/home/felix/.local/bin/hermes"
+DEFAULT_HERMES_BIN = "hermes"  # T-182: PATH lookup — no hardcoded home path
 DEFAULT_HERMES_TIMEOUT = 280  # live mirror (D8)
 PROMPT_KEYS = ("task", "prompt", "question", "message", "input")  # D6 order
 
@@ -46,6 +47,18 @@ PROMPT_KEYS = ("task", "prompt", "question", "message", "input")  # D6 order
 def _log(msg: str) -> None:
     """Logging auf stderr — stdout bleibt dem finalen JSON-Result vorbehalten."""
     print(msg, file=sys.stderr, flush=True)
+
+
+def _resolve_hermes_bin() -> str | None:
+    """Resolve the hermes executable from PATH (T-182).
+
+    Returns the absolute path, or ``None`` when not found. Operators deploy
+    their own binary and point ``HERMES_BIN`` at it; nothing here guesses a
+    user-specific home path (repo hygiene — this file ships in a public repo).
+    """
+    if shutil.which(DEFAULT_HERMES_BIN) is None:
+        return None
+    return shutil.which(DEFAULT_HERMES_BIN)
 
 
 def extract_prompt(payload: dict) -> str:
@@ -86,7 +99,9 @@ def main() -> int:
     capability = os.environ.get("RELAY_CAPABILITY", "")
     base_url = os.environ.get("RELAY_BASE_URL", "")
     token_file = os.environ.get("RELAY_TOKEN_FILE", "")
-    hermes_bin = os.environ.get("HERMES_BIN", DEFAULT_HERMES_BIN)
+    # T-182: HERMES_BIN override wins explicitly; otherwise resolve `hermes` from
+    # PATH (no hardcoded user-home default — repo hygiene).
+    hermes_bin = os.environ.get("HERMES_BIN", "").strip() or _resolve_hermes_bin()
     try:
         hermes_timeout = float(os.environ.get("HERMES_TIMEOUT", "") or DEFAULT_HERMES_TIMEOUT)
     except ValueError:
@@ -95,6 +110,15 @@ def main() -> int:
     keepalive: NoteKeepalive | None = None
     output: dict
     started = time.monotonic()
+    if hermes_bin is None:
+        # T-182: no hermes on PATH, no HERMES_BIN override — the stage cannot
+        # run. Emit the error envelope directly (D7 shape), skip the notes.
+        output = {
+            "status": "error",
+            "error": f"hermes binary not found on PATH (set HERMES_BIN to the agent binary path); looked for {DEFAULT_HERMES_BIN!r}",
+        }
+        json.dump(output, sys.stdout)
+        return 0
     try:
         # -- 2. prompt + claim log --
         prompt = extract_prompt(payload)
