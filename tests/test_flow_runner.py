@@ -1,4 +1,4 @@
-# tests/test_flow_runner.py — Task 4 (+4b) (Plan-Phase + Fan-out + Join-Loop, httpx.MockTransport mit gefakten TaskView-Sequenzen)
+# tests/test_flow_runner.py — task 4 (+4b) (plan phase + fan-out + join loop, httpx.MockTransport with faked TaskView sequences)
 import itertools
 import json
 
@@ -16,7 +16,7 @@ from flow_node.runner import (
 )
 
 BASE = "http://relay.test"
-TOKEN = "/tmp/flow-test-token"  # existiert nicht → kein Authorization-Header
+TOKEN = "/tmp/flow-test-token"  # does not exist → no Authorization header
 ORIGIN_TASK = "task-origin-1"
 ORIGIN_STAGE = "stage-origin-1"
 NODE = "flow-runner-01"
@@ -39,12 +39,12 @@ PLAN = {
 
 
 # ---------------------------------------------------------------------------
-# Test-Transport: kein echter Server, gefakte TaskView-Sequenzen
+# Test transport: no real server, faked TaskView sequences
 # ---------------------------------------------------------------------------
 
 def _patch_http(monkeypatch, handler):
-    """httpx.request + httpx.get (Modul-Ebene) auf den Handler lenken —
-    RelayApi und runner rufen beide Varianten."""
+    """Redirect httpx.request + httpx.get (module level) to the handler —
+    RelayApi and runner call both variants."""
     def patched_request(method, url, **kwargs):
         req = httpx.Request(method, url, headers=kwargs.get("headers") or {},
                             content=kwargs.get("content"))
@@ -84,8 +84,8 @@ def _ok():
 
 
 def _fake_clock(monkeypatch, step=POLL_INTERVAL_SECONDS):
-    """monotonic-Uhr, die mit time.sleep-Advances mitgeht (kein echtes Warten).
-    Records alle sleeps in state['sleeps'] für Backoff-Assertions."""
+    """monotonic clock that advances with time.sleep (no real waiting).
+    Records all sleeps in state['sleeps'] for backoff assertions."""
     state = {"elapsed": 0.0, "sleeps": []}
     def fake_sleep(seconds):
         state["elapsed"] += seconds
@@ -100,11 +100,11 @@ def _fake_clock(monkeypatch, step=POLL_INTERVAL_SECONDS):
 # ---------------------------------------------------------------------------
 
 def test_build_plan_prompt_uses_replace_not_format():
-    """str.format() würde an den literalen JSON-Braces brechen — .replace() nicht."""
-    prompt = build_plan_prompt("Erstelle 3 Bilder", "- agent.ai (available: True)")
-    assert "Erstelle 3 Bilder" in prompt
+    """str.format() would break on the literal JSON braces — .replace() does not."""
+    prompt = build_plan_prompt("Create 3 images", "- agent.ai (available: True)")
+    assert "Create 3 images" in prompt
     assert "- agent.ai (available: True)" in prompt
-    assert '{"version": 1, "name": "...", "tasks": [' in prompt  # Literale Braces intakt
+    assert '{"version": 1, "name": "...", "tasks": [' in prompt  # literal braces intact
     assert "{task}" not in prompt
     assert "{capabilities_snapshot}" not in prompt
 
@@ -116,20 +116,20 @@ def test_extract_plan_json_direct_and_one_level_deep():
 
 
 def test_extract_plan_json_fenced_answer():
-    # agent.ai antwortet mitunter mit ```json-Fences (Live-Befund 2026-09-28):
-    # der Plan steckt als fenced String im answer-Feld.
+    # agent.ai sometimes answers with ```json fences (live finding 2026-09-28):
+    # the plan is a fenced string inside the answer field.
     fenced = '```json\n' + json.dumps(PLAN) + '\n```'
     assert extract_plan_json(json.dumps({"result": {"answer": fenced}}))["name"] == "demo"
-    # Auch plain fenced (ohne JSON-Wrapper drum herum).
+    # also plain fenced (without a JSON wrapper around it).
     assert extract_plan_json(fenced)["name"] == "demo"
-    with_text = f"Vorrede\n{json.dumps(PLAN)}\nNachrede"
+    with_text = f"Preamble\n{json.dumps(PLAN)}\nPostscript"
     assert extract_plan_json(with_text)["name"] == "demo"
 
 
 def test_extract_plan_json_two_levels_deep_agent_ai():
-    """Live-Form (2026-09-06, TTL-300-Test): agent.ai-Antwort steckt zwei Ebenen
-    tief — {'status': ..., 'result': {'answer': '<plan-json-als-string>'}}.
-    Erwartung: gefunden statt 'no plan JSON object'."""
+    """Live shape (2026-09-06, TTL-300 test): agent.ai answer nested two levels
+    deep — {'status': ..., 'result': {'answer': '<plan-json-as-string>'}}.
+    Expectation: found instead of 'no plan JSON object'."""
     wrapped = {"status": "completed", "result": {"answer": json.dumps(PLAN)}}
     assert extract_plan_json(json.dumps(wrapped))["name"] == "demo"
 
@@ -144,8 +144,8 @@ def test_extract_plan_json_rejects_no_tasks_array():
 # ---------------------------------------------------------------------------
 
 def test_planning_child_submitted_first_and_plan_extracted_lenient(monkeypatch):
-    """(a) Planungs-Kind zuerst submittet (idempotency flow-<origin>-_plan,
-    Name flow:_plan); Plan-Extraktion lenient (Result in {'result': ...})."""
+    """(a) planning child submitted first (idempotency flow-<origin>-_plan,
+    name flow:_plan); plan extraction lenient (result in {'result': ...})."""
     calls = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -158,23 +158,23 @@ def test_planning_child_submitted_first_and_plan_extracted_lenient(monkeypatch):
             if body["capability"] == "agent.ai":
                 assert body["idempotency_key"] == f"flow-{ORIGIN_TASK}-{PLAN_TASK_REF}"
                 assert body["name"] == "flow:_plan"
-                assert "Erstelle 3 Produktbilder" in body["payload"]["task"]
+                assert "Create 3 product images" in body["payload"]["task"]
                 return _submit_response("plan-child-1")
             return _submit_response(f"child-{body['name']}")
         if url.startswith("/relay/v2/scheduler/tasks/"):
             task_id = url.split("/")[5]
             if task_id == "plan-child-1":
-                # lenient: Plan als JSON-String in {"result": ...}
+                # lenient: plan as JSON string in {"result": ...}
                 return _task_view("plan-child-1", "completed", result={"result": json.dumps(PLAN)})
             return _task_view(task_id, "completed", result={"done": task_id})
         return _ok()
 
     _patch_http(monkeypatch, handler)
     api = RelayApi(BASE, TOKEN)
-    result = run(api, {"task": "Erstelle 3 Produktbilder"}, BASE, TOKEN,
+    result = run(api, {"task": "Create 3 product images"}, BASE, TOKEN,
                  ORIGIN_TASK, ORIGIN_STAGE, NODE)
 
-    # Planungs-Kind als ERSTER task-simple-Submit
+    # planning child as the FIRST task-simple submit
     simple_posts = [c for c in calls if c[1] == "/relay/v2/scheduler/task-simple"]
     assert simple_posts[0][0] == "POST" and len(simple_posts) == 3  # _plan, a, b
     assert result["status"] == "completed"
@@ -183,8 +183,8 @@ def test_planning_child_submitted_first_and_plan_extracted_lenient(monkeypatch):
 
 
 def test_invalid_plan_json_one_retry_with_feedback_then_fail(monkeypatch):
-    """(b) ungültiges Plan-JSON → D9: 1 Retry mit Validerings-Fehler im Prompt,
-    2. Versuch failt → Flow failed mit Grund."""
+    """(b) invalid plan JSON → D9: 1 retry with the validation error in the prompt,
+    2nd attempt fails → flow failed with reason."""
     _fake_clock(monkeypatch)
     submits = []
 
@@ -199,9 +199,9 @@ def test_invalid_plan_json_one_retry_with_feedback_then_fail(monkeypatch):
         if url.startswith("/relay/v2/scheduler/tasks/plan-"):
             n = int(url.rsplit("plan-", 1)[1].split("/")[0])
             if n == 1:
-                # kein JSON-Objekt mit tasks
-                return _task_view(f"plan-{n}", "completed", result={"result": "kein plan hier"})
-            # 2. Versuch: formal JSON, aber leerer tasks-Array → PlanError
+                # no JSON object with tasks
+                return _task_view(f"plan-{n}", "completed", result={"result": "no plan here"})
+            # 2nd attempt: formally JSON, but empty tasks array → PlanError
             return _task_view(f"plan-{n}", "completed",
                              result={"result": json.dumps({"version": 1, "tasks": []})})
         return _ok()
@@ -211,21 +211,21 @@ def test_invalid_plan_json_one_retry_with_feedback_then_fail(monkeypatch):
     with pytest.raises(Exception, match="plan phase failed"):
         run(api, {"task": "test"}, BASE, TOKEN, ORIGIN_TASK, ORIGIN_STAGE, NODE)
 
-    assert len(submits) == 2  # genau 1 Retry (D9)
-    # D9-Retry braucht pro Attempt einen NEUEN Idempotency-Key — sonst liefert
-    # der Server dasselbe fertig-gefailte Planungs-Kind zurück (Live-Bug
-    # 2026-09-06) und der Feedback-Retry wäre tot.
+    assert len(submits) == 2  # exactly 1 retry (D9)
+    # The D9 retry needs a NEW idempotency key per attempt — otherwise the
+    # server returns the same fully failed planning child (live bug
+    # 2026-09-06) and the feedback retry would be dead.
     assert submits[0]["idempotency_key"] == f"flow-{ORIGIN_TASK}-{PLAN_TASK_REF}"
     assert submits[1]["idempotency_key"] == f"flow-{ORIGIN_TASK}-{PLAN_TASK_REF}-2"
     assert submits[1]["name"] == "flow:_plan-2"
-    # Retry-Prompt enthält das Validerings-Feedback aus Versuch 1
-    assert "ungültig" in submits[1]["payload"]["task"]
+    # the retry prompt contains the validation feedback from attempt 1
+    assert "invalid" in submits[1]["payload"]["task"]
     assert "no plan JSON object" in submits[1]["payload"]["task"]
 
 
 def test_parallel_roots_and_join_submit_order_respects_deps(monkeypatch):
-    """(c) 2 parallele Roots + 1 Join → Roots zuerst, Join erst wenn Roots done.
-    Roots sind bis Poll-Runde 2 pending (t-b-Semantik) — Join-Submit erst danach."""
+    """(c) 2 parallel roots + 1 join → roots first, join only once the roots are done.
+    Roots stay pending until poll round 2 (t-b semantics) — join submit only after that."""
     _fake_clock(monkeypatch)
     submitted = []
     poll_counts = {}
@@ -257,7 +257,7 @@ def test_parallel_roots_and_join_submit_order_respects_deps(monkeypatch):
                 return _task_view("plan-child-1", "completed", result={"result": json.dumps(plan3)})
             poll_counts[task_id] = poll_counts.get(task_id, 0) + 1
             if task_id in ("flow:j:r1", "flow:j:r2"):
-                done = poll_counts[task_id] >= 2  # Roots pending bis Poll-Runde 2
+                done = poll_counts[task_id] >= 2  # roots pending until poll round 2
                 return _task_view(task_id, "completed" if done else "pending",
                                   result={"ref": task_id} if done else None)
             if task_id == "flow:j:join":
@@ -276,8 +276,8 @@ def test_parallel_roots_and_join_submit_order_respects_deps(monkeypatch):
 
 
 def test_child_failed_is_fail_fast_no_successor_submit(monkeypatch):
-    """(d) ein Kind failed (permanent) → fail-fast, kein Submit von Nachfolgern;
-    Note 'flow failed at <task-ref> (<capability>): <error>' + fail_stage."""
+    """(d) a child failed (permanent) → fail-fast, no submit of successors;
+    note 'flow failed at <task-ref> (<capability>): <error>' + fail_stage."""
     _fake_clock(monkeypatch)
     submits, notes, completes = [], [], []
 
@@ -310,7 +310,7 @@ def test_child_failed_is_fail_fast_no_successor_submit(monkeypatch):
             if task_id == "flow:_plan":
                 return _task_view("flow:_plan", "completed", result={"result": json.dumps(plan2)})
             if task_id == "flow:f:a":
-                return _task_view("flow:f:a", "failed", error="tool kaputt")
+                return _task_view("flow:f:a", "failed", error="tool broken")
             return _task_view(task_id, "completed", result={})
         return httpx.Response(404)
 
@@ -319,14 +319,14 @@ def test_child_failed_is_fail_fast_no_successor_submit(monkeypatch):
     with pytest.raises(Exception, match="flow failed at a"):
         run(api, {"task": "t"}, BASE, TOKEN, ORIGIN_TASK, ORIGIN_STAGE, NODE)
 
-    # Kein Nachfolger-Submit (fail-fast, D6)
+    # no successor submit (fail-fast, D6)
     assert "flow:f:b" not in submits
-    assert any("flow failed at a (tool.x): tool kaputt" in n["message"] for n in notes)
-    assert any(c.get("error") for c in completes)  # fail_stage am Ursprungs-Stage
+    assert any("flow failed at a (tool.x): tool broken" in n["message"] for n in notes)
+    assert any(c.get("error") for c in completes)  # fail_stage on the origin stage
 
 
 def test_idempotency_key_stable_on_repeat(monkeypatch):
-    """(e) idempotency_key = flow-<origin-task-id>-<task-id> (§2.5) stabil bei Wiederholung."""
+    """(e) idempotency_key = flow-<origin-task-id>-<task-id> (§2.5), stable on repeat."""
     _fake_clock(monkeypatch)
     seen_keys = []
 
@@ -352,14 +352,14 @@ def test_idempotency_key_stable_on_repeat(monkeypatch):
 
     assert f"flow-{ORIGIN_TASK}-a" in seen_keys and f"flow-{ORIGIN_TASK}-b" in seen_keys
     assert f"flow-{ORIGIN_TASK}-{PLAN_TASK_REF}" in seen_keys
-    # Keys sind bei Wiederholung identisch → Re-Fanout erzeugt keine Duplikate (§2.5)
-    assert seen_keys.count(f"flow-{ORIGIN_TASK}-a") == 2  # beide Läufe, gleicher Key
-    assert len(set(seen_keys)) == 3  # _plan + a + b, keine weiteren
+    # keys are identical on repeat → re-fanout creates no duplicates (§2.5)
+    assert seen_keys.count(f"flow-{ORIGIN_TASK}-a") == 2  # both runs, same key
+    assert len(set(seen_keys)) == 3  # _plan + a + b, no more
 
 
 def test_join_completes_origin_stage_with_aggregate(monkeypatch):
-    """(f) alle done → aggregate {task_ref: result} → complete_stage() am
-    Ursprungs-Stage mit {'status': 'completed', 'aggregate': ..., 'summary': plan.summary}."""
+    """(f) all done → aggregate {task_ref: result} → complete_stage() at the
+    origin stage with {'status': 'completed', 'aggregate': ..., 'summary': plan.summary}."""
     _fake_clock(monkeypatch)
     completes = []
 
@@ -385,7 +385,7 @@ def test_join_completes_origin_stage_with_aggregate(monkeypatch):
     api = RelayApi(BASE, TOKEN)
     result = run(api, {"task": "t"}, BASE, TOKEN, ORIGIN_TASK, ORIGIN_STAGE, NODE)
 
-    assert completes, "complete_stage am Ursprungs-Stage wurde nicht gerufen"
+    assert completes, "complete_stage on the origin stage was not called"
     body = completes[0]
     assert body["task_id"] == ORIGIN_TASK
     assert body["result"]["status"] == "completed"
@@ -399,8 +399,8 @@ def test_join_completes_origin_stage_with_aggregate(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_poll_backoff_after_consecutive_http_errors(monkeypatch):
-    """Task 4b: HTTP-Fehler beim Pollen → exponentieller Backoff statt hartem
-    Busy-Loop; nach Erholung läuft der Flow normal weiter."""
+    """Task 4b: HTTP errors while polling → exponential backoff instead of a hard
+    busy loop; after recovery the flow continues normally."""
     state = _fake_clock(monkeypatch)
     polls = {"fails_left": 3}
 
@@ -412,14 +412,14 @@ def test_poll_backoff_after_consecutive_http_errors(monkeypatch):
             body = json.loads(request.content)
             return _submit_response(body["name"])
         if url.endswith(("/notes", "/complete")):
-            return _ok()  # Fehler-Injektion NUR für Task-GETs, nicht Notes/Complete
+            return _ok()  # error injection ONLY for task GETs, not notes/complete
         if url.startswith("/relay/v2/scheduler/tasks/"):
             task_id = url.split("/")[5]
             if task_id == "flow:_plan":
                 return _task_view("flow:_plan", "completed", result={"result": json.dumps(PLAN)})
             if polls["fails_left"] > 0:
                 polls["fails_left"] -= 1
-                return httpx.Response(500)  # simulate HTTP error, raise_for_status greift
+                return httpx.Response(500)  # simulate HTTP error, raise_for_status kicks in
             return _task_view(task_id, "completed", result={})
         return _ok()
 
@@ -427,16 +427,16 @@ def test_poll_backoff_after_consecutive_http_errors(monkeypatch):
     api = RelayApi(BASE, TOKEN)
     run(api, {"task": "t"}, BASE, TOKEN, ORIGIN_TASK, ORIGIN_STAGE, NODE)
 
-    # Backoff kam vor: nach 3 Fehlern exponentielle Delays > Grundintervall 5s
+    # backoff happened: after 3 errors exponential delays > base interval 5s
     assert any(s > POLL_INTERVAL_SECONDS for s in state["sleeps"])
-    # Backoff-Delays wachsen exponentiell (5s-Grundtakt → 10s → 20s ...)
+    # backoff delays grow exponentially (5s base → 10s → 20s ...)
     backs = [s for s in state["sleeps"] if s > POLL_INTERVAL_SECONDS]
     assert backs == sorted(backs) and all(b <= 60.0 for b in backs)
 
 
 def test_keepalive_note_every_600s_independent_timer(monkeypatch):
-    """Task 4b: Keepalive-Note alle 600s unabhängig vom Poll-Takt ('flow progress:
-    done=K/N') — ein Flow mit langsamen Kindern darf die Lease nicht verlieren."""
+    """Task 4b: keepalive note every 600s independent of the poll cadence ('flow progress:
+    done=K/N') — a flow with slow children must not lose the lease."""
     state = _fake_clock(monkeypatch)
     notes = []
 
@@ -454,7 +454,7 @@ def test_keepalive_note_every_600s_independent_timer(monkeypatch):
             task_id = url.split("/")[5]
             if task_id == "flow:_plan":
                 return _task_view("flow:_plan", "completed", result={"result": json.dumps(PLAN)})
-            # Kinder bleiben lange pending: done erst nach >= 1300s (2+ Keepalive-Runden)
+            # children stay pending for a long time: done only after >= 1300s (2+ keepalive rounds)
             if state["elapsed"] >= 1300:
                 return _task_view(task_id, "completed", result={"out": task_id})
             return _task_view(task_id, "pending")
@@ -466,18 +466,18 @@ def test_keepalive_note_every_600s_independent_timer(monkeypatch):
     api = RelayApi(BASE, TOKEN)
     run(api, {"task": "t"}, BASE, TOKEN, ORIGIN_TASK, ORIGIN_STAGE, NODE)
 
-    assert len(notes) >= 2  # mindestens alle 600s eine progress-Note (unabhängiger Timer)
+    assert len(notes) >= 2  # at least one progress note per 600s (independent timer)
     kinds = {k for _, k, _ in notes}
     assert "longrun" in kinds  # Lease-Refresh (T-154)
     times = [t for _, _, t in notes]
     gaps = [b - a for a, b in itertools.pairwise(times)]
-    assert all(g >= KEEPALIVE_INTERVAL_SECONDS * 0.9 for g in gaps)  # ~600s-Abstand
+    assert all(g >= KEEPALIVE_INTERVAL_SECONDS * 0.9 for g in gaps)  # ~600s spacing
     msgs = [m for m, _, _ in notes]
-    assert any("flow progress: done=" in m for m in msgs)  # done=K/N-Format
+    assert any("flow progress: done=" in m for m in msgs)  # done=K/N format
 
 
 def test_flow_budget_exceeded_fails_stage(monkeypatch):
-    """Task 4b: options.max_flow_seconds überschritten → fail_stage 'flow budget exceeded'."""
+    """Task 4b: options.max_flow_seconds exceeded → fail_stage 'flow budget exceeded'."""
     _fake_clock(monkeypatch)
     completes = []
 
@@ -490,7 +490,7 @@ def test_flow_budget_exceeded_fails_stage(monkeypatch):
             task_id = url.split("/")[5]
             if task_id == "flow:_plan":
                 return _task_view("flow:_plan", "completed", result={"result": json.dumps(PLAN)})
-            return _task_view(task_id, "pending")  # Kinder NEVER done
+            return _task_view(task_id, "pending")  # children NEVER done
         if url.endswith("/complete"):
             completes.append(json.loads(request.content))
             return _ok()

@@ -1,6 +1,6 @@
-"""Plan-Datenmodell für flow.run (T-172). Ein Plan ist ein DAG von Task-Schritten.
+"""Plan data model for flow.run (T-172). A plan is a DAG of task steps.
 
-Frozen Contract: §2.2 (Plan-JSON) in .hermes/plans/flow-run-mvp.md.
+Frozen contract: §2.2 (plan JSON) in .hermes/plans/flow-run-mvp.md.
 """
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from typing import Any
 
 
 class PlanError(ValueError):
-    """Plan ist strukturell ungültig (Schema, Duplikate, Zyklen, Unerreichbarkeit)."""
+    """Plan is structurally invalid (schema, duplicates, cycles, unreachability)."""
 
 
 @dataclass(frozen=True)
@@ -28,16 +28,16 @@ class Plan:
     by_id: dict[str, PlanTask] = field(init=False)
 
     def __post_init__(self):
-        """Baut den id → PlanTask-Index (§2.2: ids sind eindeutig)."""
+        """Builds the id → PlanTask index (§2.2: ids are unique)."""
         object.__setattr__(self, "by_id", {t.id: t for t in self.tasks})
 
     def roots(self) -> list[PlanTask]:
-        """Alle Plan-Tasks ohne depends_on (DAG-Quellen, §2.2)."""
+        """All plan tasks without depends_on (DAG sources, §2.2)."""
         return [t for t in self.tasks if not t.depends_on]
 
 
 def parse_plan(raw: dict[str, Any]) -> Plan:
-    """Validiert Schema + Referenzen + Zyklen + Erreichbarkeit. Wirft PlanError."""
+    """Validates schema + references + cycles + reachability. Raises PlanError."""
     if not isinstance(raw, dict):
         raise PlanError("plan must be an object")
     if raw.get("version") != 1:
@@ -76,7 +76,7 @@ def parse_plan(raw: dict[str, Any]) -> Plan:
 
 
 def _assert_acyclic_and_reachable(plan: Plan) -> None:
-    """Kahn-Topologie: Zyklen → PlanError; nicht erreichte Knoten → PlanError."""
+    """Kahn topology: cycles → PlanError; unreachable nodes → PlanError."""
     indeg = {t.id: len(t.depends_on) for t in plan.tasks}
     children: dict[str, list[str]] = {t.id: [] for t in plan.tasks}
     for t in plan.tasks:
@@ -84,7 +84,7 @@ def _assert_acyclic_and_reachable(plan: Plan) -> None:
             children[d].append(t.id)
     frontier = [tid for tid, d in indeg.items() if d == 0]
     if not frontier:
-        raise PlanError("plan.cycle — no root tasks (alle tasks haben depends_on)")
+        raise PlanError("plan.cycle — no root tasks (all tasks have depends_on)")
     seen: set[str] = set()
     while frontier:
         node = frontier.pop()
@@ -95,4 +95,4 @@ def _assert_acyclic_and_reachable(plan: Plan) -> None:
                 frontier.append(c)
     unreachable = set(indeg) - seen
     if unreachable:
-        raise PlanError(f"plan.unreachable tasks ( Zyklus oder hängende Kante ): {sorted(unreachable)}")
+        raise PlanError(f"plan.unreachable tasks (cycle or dangling edge): {sorted(unreachable)}")

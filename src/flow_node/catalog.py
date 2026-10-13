@@ -1,12 +1,12 @@
-"""Flow-Katalog + Historie (T-003).
+"""Flow catalog + history (T-003).
 
-Sauber getrennt vom Classic-Plan-Lauf:
-- Katalog: vorgefertigte Flows als Plan-JSON-Dateien im Katalog-Dir
-  (env FLOW_CATALOG_DIR, Default 'templates' relativ zum CWD).
-- Historie: nicht dauerhaft. Erfolgreiche Läufe landen als JSON im
-  History-Dir (env FLOW_HISTORY_DIR, Default 'history'); Cleanup beim
-  Flow-Start mit BEIDEN Regeln (Max-Age UND Max-Count), fail-soft.
-- save_flow: explizite Beförderung Historie → Katalog.
+Cleanly separated from the classic plan run:
+- Catalog: prebuilt flows as plan-JSON files in the catalog dir
+  (env FLOW_CATALOG_DIR, default 'templates' relative to the CWD).
+- History: not persistent. Successful runs land as JSON in the
+  history dir (env FLOW_HISTORY_DIR, default 'history'); cleanup at
+  flow start with BOTH rules (max-age AND max-count), fail-soft.
+- save_flow: explicit promotion history → catalog.
 """
 from __future__ import annotations
 
@@ -17,18 +17,18 @@ import time
 from pathlib import Path
 from typing import Any
 
-# Cleanup-Regeln (beide, getrennt): Max-Age UND Max-Count.
+# Cleanup rules (both, separate): max-age AND max-count.
 HISTORY_MAX_AGE_DAYS = 14
 HISTORY_MAX_COUNT = 50
 
-# Template-Muster für Flow-Input: ${input.path} (separat von ${ref.result.path}).
+# Template pattern for flow input: ${input.path} (separate from ${ref.result.path}).
 INPUT_TEMPLATE_RE = re.compile(
     r"\$\{input\.([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)\}"
 )
 
 
 class CatalogError(RuntimeError):
-    """Katalog-/Historie-Fehler (fehlender Flow, ungültige Datei)."""
+    """Catalog/history error (missing flow, invalid file)."""
 
 
 def catalog_dir() -> Path:
@@ -40,10 +40,10 @@ def history_dir() -> Path:
 
 
 def list_flows(caps: dict[str, dict]) -> list[dict[str, Any]]:
-    """Katalog-Einträge: name, summary, capabilities + live available-Status.
+    """Catalog entries: name, summary, capabilities + live available status.
 
-    Fail-soft: ungültige/lesbare Katalog-Dateien werden mit 'error' gemeldet,
-    nicht geworfen — der Katalog-Modus soll antworten, nicht failen.
+    Fail-soft: invalid/unreadable catalog files are reported with 'error',
+    not raised — the catalog mode should answer, not fail.
     """
     entries: list[dict[str, Any]] = []
     d = catalog_dir()
@@ -75,7 +75,7 @@ def list_flows(caps: dict[str, dict]) -> list[dict[str, Any]]:
 
 
 def load_flow(name: str) -> dict[str, Any]:
-    """Lädt Plan-JSON aus dem Katalog. CatalogError bei fehlen/ungültig."""
+    """Loads plan JSON from the catalog. CatalogError when missing/invalid."""
     if not re.fullmatch(r"[A-Za-z0-9_-]+", name or ""):
         raise CatalogError(f"invalid flow name: {name!r}")
     path = catalog_dir() / f"{name}.json"
@@ -91,9 +91,9 @@ def load_flow(name: str) -> dict[str, Any]:
 
 
 def save_flow_from_history(history_id: str) -> str:
-    """Befördert einen Historie-Eintrag in den Katalog (explizit, dauerhaft).
+    """Promotes a history entry into the catalog (explicit, persistent).
 
-    Returns: Flow-Name im Katalog.
+    Returns: the flow name in the catalog.
     """
     rec = load_history_record(history_id)
     name = _safe_name(str(rec.get("flow_name") or history_id))
@@ -107,14 +107,14 @@ def save_flow_from_history(history_id: str) -> str:
     return name
 
 
-# ---- Historie (nicht dauerhaft) ---------------------------------------------
+# ---- History (not persistent) ------------------------------------------------
 
 def record_history(flow_name: str, plan: dict[str, Any], aggregate: dict[str, Any],
                    origin_task_id: str) -> str:
-    """Schreibt einen Historie-Eintrag für einen ERFOLGREICHEN Flow.
+    """Writes a history entry for a SUCCESSFUL flow.
 
-    Fail-soft per Design: Aufrufer darf History-Fehler nie zum Flow-Fail machen
-    (wird in runner.run so gehandhabt). Liefert die history_id.
+    Fail-soft by design: callers must never turn history errors into a flow
+    failure (handled that way in runner.run). Returns the history_id.
     """
     history_id = f"{_safe_name(origin_task_id)}-{_safe_name(flow_name)}-{int(time.time())}"
     d = history_dir()
@@ -133,7 +133,7 @@ def record_history(flow_name: str, plan: dict[str, Any], aggregate: dict[str, An
 
 
 def load_history_record(history_id: str) -> dict[str, Any]:
-    """Lädt einen Historie-Eintrag. CatalogError bei fehlen/ungültig."""
+    """Loads a history entry. CatalogError when missing/invalid."""
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", history_id or ""):
         raise CatalogError(f"invalid history_id: {history_id!r}")
     path = history_dir() / f"{history_id}.json"
@@ -150,9 +150,9 @@ def load_history_record(history_id: str) -> dict[str, Any]:
 
 def cleanup_history(now: float | None = None, max_age_days: int = HISTORY_MAX_AGE_DAYS,
                     max_count: int = HISTORY_MAX_COUNT) -> dict[str, int]:
-    """Räumt die Historie mit BEIDEN Regeln auf: Max-Age UND Max-Count.
+    """Cleans up the history with BOTH rules: max-age AND max-count.
 
-    Liefert {'removed_age': n, 'removed_count': m}. Kein Dir → no-op.
+    Returns {'removed_age': n, 'removed_count': m}. No dir → no-op.
     """
     now = time.time() if now is None else now
     d = history_dir()
@@ -172,20 +172,20 @@ def cleanup_history(now: float | None = None, max_age_days: int = HISTORY_MAX_AG
                 removed["removed_count"] += 1
             else:
                 keep.append(path)
-            # Dateien, die weder alt noch überzählig sind, bleiben in keep.
+            # Files that are neither old nor surplus stay in keep.
         except OSError:
-            continue  # fail-soft: besetzte/verschollene Datei überspringen
+            continue  # fail-soft: skip busy/stranded file
     return removed
 
 
-# ---- ${input.path}-Template-Auflösung (Flow-Input) ---------------------------
+# ---- ${input.path} template resolution (flow input) -------------------------
 
 def resolve_input_templates(value: Any, flow_input: dict[str, Any]) -> Any:
-    """Löst ${input.path} gegen das Flow-Input-Objekt auf (rekursiv).
+    """Resolves ${input.path} against the flow input object (recursive).
 
-    Ein String mit exakt EINEM Match → nativer Wert; eingebettet → str()-Sub-
-    stitution. Fehlender Input-Path → CatalogError (fail-fast, Runner wrappt
-    mit task-Kontext).
+    A string with exactly ONE match → native value; embedded → str() sub-
+    stitution. Missing input path → CatalogError (fail-fast; the runner wraps
+    it with task context).
     """
     if isinstance(value, dict):
         return {k: resolve_input_templates(v, flow_input) for k, v in value.items()}
@@ -222,6 +222,6 @@ def _template_str(value: Any) -> str:
 
 
 def _safe_name(raw: str) -> str:
-    """Kompakter, Dateisystem-sicherer Name-Teil."""
+    """Compact, filesystem-safe name component."""
     cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw.strip())
     return cleaned[:60] or "flow"

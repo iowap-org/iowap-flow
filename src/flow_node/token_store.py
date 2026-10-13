@@ -1,11 +1,11 @@
-"""Token-Laden für flow.run — eine Quelle der Wahrheit (T-088-Envelope).
+"""Token loading for flow.run — one source of truth (T-088 envelope).
 
-Seit T-088 ist die Runtime-Token-Datei ein JSON-Envelope
-``{"token": "...", "expires_at": "..."|null}``. Legacy-Installs haben eine
- Plaintext-Datei (eine Zeile = Token). Diese Funktion akzeptiert beides
-und gibt den roten Bearer-Token zurück — node_utils.load_token() im
-iowap-node implementiert dieselbe Semantik (T-088), hier bewusst
-dupliziert, damit flow.run ohne nodes-Package läuft.
+Since T-088 the runtime token file is a JSON envelope
+``{"token": "...", "expires_at": "..."|null}``. Legacy installs have a
+plaintext file (one line = token). This function accepts both
+and returns the raw bearer token — node_utils.load_token() in
+iowap-node implements the same semantics (T-088), deliberately
+duplicated here so flow.run runs without the nodes package.
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from pathlib import Path
 
 
 def load_bearer_token(token_file: str | Path) -> str:
-    """Liest die Token-Datei und liefert den Bearer-Token (Env- oder JSON-Format)."""
+    """Reads the token file and returns the bearer token (env or JSON format)."""
     raw = Path(token_file).read_text().strip()
     if not raw:
         return ""

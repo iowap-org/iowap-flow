@@ -1,10 +1,10 @@
-"""Plan-Phase + Fan-out + Join-Loop für flow.run (Herzstück, T-172).
+"""Plan phase + fan-out + join loop for flow.run (core piece, T-172).
 
-Implementiert Plan Task 4 + 4b (.hermes/plans/flow-run-mvp.md):
-fail-fast D6, D9-Plan-Retry, topologisches Parallel-Fan-out, Poll-Loop 5s
-mit exponentiellem Backoff, unabhängiger Lease-Keepalive (600s), Flow-Budget.
-Dazu T-002: Template-Interpolation ${ref.result.path} — Dateninjektion
-zwischen Flow-Tasks, aufgelöst beim Submit aus dem laufenden Aggregate.
+Implements plan task 4 + 4b (.hermes/plans/flow-run-mvp.md):
+fail-fast D6, D9 plan retry, topological parallel fan-out, poll loop 5s
+with exponential backoff, independent lease keepalive (600s), flow budget.
+Plus T-002: template interpolation ${ref.result.path} — data injection
+between flow tasks, resolved at submit time from the running aggregate.
 """
 from __future__ import annotations
 
@@ -31,29 +31,29 @@ from .discovery import fetch_capabilities, validate_capabilities_live
 from .plan import Plan, PlanError, parse_plan
 from .relay_api import RelayApi
 
-# ---- Frozen Konstanten (Plan Task 4/4b + §2.4/§2.5) -------------------------
+# ---- Frozen constants (plan task 4/4b + §2.4/§2.5) --------------------------
 
-PLAN_CAPABILITY = "agent.ai"          # Planungs-Kind läuft auf agent.ai (Task 4, Step 0)
+PLAN_CAPABILITY = "agent.ai"          # planning child runs on agent.ai (task 4, step 0)
 PLAN_TASK_REF = "_plan"               # idempotency_key: flow-<origin>-_plan
-IDEMPOTENCY_PREFIX = "flow"           # idempotency_key: flow-<ursprungs-task-id>-<task-id> (§2.5)
+IDEMPOTENCY_PREFIX = "flow"           # idempotency_key: flow-<origin-task-id>-<task-id> (§2.5)
 TASK_NAME_PREFIX = "flow:"            # task_name: flow:<flow-name>:<task-id> (§2.5)
-POLL_INTERVAL_SECONDS = 5.0           # Poll-Loop 5s (D5)
-POLL_BACKOFF_MAX_SECONDS = 60.0       # exponentiell bis 60s (Task 4b)
-POLL_BACKOFF_MAX_ERRORS = 3           # nach 3 aufeinanderfolgenden HTTP-Fehlern → Backoff (Task 4b)
-KEEPALIVE_INTERVAL_SECONDS = 600.0    # Keepalive-Note alle 600s, unabhängiger Timer (Task 4b, §2.4)
-DEFAULT_MAX_FLOW_SECONDS = 14400      # 4h = Stage-Timeout des Submits (Task 4b, §2.1)
+POLL_INTERVAL_SECONDS = 5.0           # poll loop 5s (D5)
+POLL_BACKOFF_MAX_SECONDS = 60.0       # exponential up to 60s (task 4b)
+POLL_BACKOFF_MAX_ERRORS = 3           # after 3 consecutive HTTP errors → backoff (task 4b)
+KEEPALIVE_INTERVAL_SECONDS = 600.0    # keepalive note every 600s, independent timer (task 4b, §2.4)
+DEFAULT_MAX_FLOW_SECONDS = 14400      # 4h = stage timeout of the submit (task 4b, §2.1)
 
-# Task 4b: Backoff 5s→10s→20s→40s→60s (Cap), danach Fehler → exit 1
-# (Server-Release-Mechanik übernimmt — deshalb FlowError ohne fail_stage).
+# Task 4b: backoff 5s→10s→20s→40s→60s (cap), then error → exit 1
+# (the server release mechanics take over — hence FlowError without fail_stage).
 _BACKOFF_FATAL_ERRORS = POLL_BACKOFF_MAX_ERRORS + math.ceil(
     math.log2(POLL_BACKOFF_MAX_SECONDS / POLL_INTERVAL_SECONDS)
 )
 
-# §2.3 PLAN_PROMPT-Template (FROZEN — bytegenau aus dem Plan übernommen; T-002
-# ergänzt den Datenweitergabe-Absatz). Platzhalter:
-# {task} und {capabilities_snapshot}. ACHTUNG: Die Plan-Schema-Zeile enthält LITERALE
-# JSON-Braces ({"version": 1, ...}) — eine naive str.format() über das ganze Template
-# würde dort brechen; Substitutions-Mechanik entscheidet Phase 3.
+# §2.3 PLAN_PROMPT template (FROZEN — taken byte-exact from the plan; T-002
+# adds the data-passing paragraph). Placeholders:
+# {task} and {capabilities_snapshot}. CAREFUL: the plan-schema line contains LITERAL
+# JSON braces ({"version": 1, ...}) — a naive str.format() over the whole template
+# would break there; the substitution mechanics is decided in phase 3.
 PLAN_PROMPT = """\
 Du bist der Planner eines IOWAP-Task-Clusters. Erstelle einen Ausführungsplan
 für folgende Aufgabe. Antworte NUR mit dem Plan-JSON (Schema siehe unten),
@@ -83,15 +83,15 @@ depends_on stehen, sonst failt der Flow beim Submit.
 
 
 class FlowError(RuntimeError):
-    """Flow-Level-Fehler (Plan-Phase, Fan-out, Join) — führt zu exit 1 + stderr-Grund."""
+    """Flow-level error (plan phase, fan-out, join) — leads to exit 1 + stderr reason."""
 
 
 def build_plan_prompt(task: str, capabilities_snapshot: str) -> str:
-    """Baut den PLAN_PROMPT (§2.3): task + Cap-Snapshot ins FROZEN Template einbetten.
+    """Builds the PLAN_PROMPT (§2.3): embeds task + cap snapshot into the FROZEN template.
 
-    .replace() statt str.format(): Das Template enthält LITERALE JSON-Braces
-    in der Schema-Zeile ({"version": 1, ...}), an denen str.format() brechen
-    würde. .replace() ersetzt ausschließlich die zwei Platzhalter.
+    .replace() instead of str.format(): the template contains LITERAL JSON braces
+    in the schema line ({"version": 1, ...}) where str.format() would break.
+    .replace() replaces only the two placeholders.
     """
     return (
         PLAN_PROMPT
@@ -101,15 +101,15 @@ def build_plan_prompt(task: str, capabilities_snapshot: str) -> str:
 
 
 def extract_plan_json(result_text: str) -> dict:
-    """Extrahiert lenient das Plan-JSON aus dem agent.ai-Result: erstes JSON-Objekt
-    mit 'tasks'-Array, rekursiv — NICHT freetext-Regex (Task 5).
+    """Leniently extracts the plan JSON from the agent.ai result: first JSON object
+    with a 'tasks' array, recursively — NOT freetext regex (task 5).
 
-    Rekursiv heißt: der ganze Text als JSON, plus JSON-Objekte in verschachtelten
-    Containern und in String-Werten (String-Werte werden erneut JSON-geparst) —
-    z. B. {"result": "{...}"} oder die Live-Form 2026-09-06:
-    {"status": "completed", "result": {"answer": "<plan-json>"}} (T-172-Test,
-    alter Code schaute nur eine Ebene tief und fand den Plan nie).
-    Fallback ohne Regex: erstes '{' bis letztes '}' des Texts.
+    Recursive means: the whole text as JSON, plus JSON objects in nested
+    containers and in string values (string values are JSON-parsed again) —
+    e.g. {"result": "{...}"} or the live shape 2026-09-06:
+    {"status": "completed", "result": {"answer": "<plan-json>"}} (T-172 test,
+    the old code looked only one level deep and never found the plan).
+    Regex-free fallback: first '{' to last '}' of the text.
     """
     direct = _try_json(result_text)
     if direct is None:
@@ -124,9 +124,9 @@ def extract_plan_json(result_text: str) -> dict:
 
 
 def _strip_code_fences(text: str) -> str:
-    """Entfernt Markdown-Code-Fences (```json ... ``` / ``` ... ```), falls
-    vorhanden — agent.ai antwortet mitunter fenced (Live-Befund 2026-09-28:
-    Plan-Phase failt, weil _try_json an den Fences scheitert)."""
+    """Removes markdown code fences (```json ... ``` / ``` ... ```), if
+    present — agent.ai sometimes answers fenced (live finding 2026-09-28:
+    the plan phase failed because _try_json choked on the fences)."""
     stripped = text.strip()
     if stripped.startswith("```"):
         first_nl = stripped.find("\n")
@@ -147,8 +147,8 @@ _MAX_EXTRACT_DEPTH = 8
 
 
 def _candidate_objects(obj: Any):
-    """Yieldet alle dicts im Result (rekursiv, Tiefen-Cap, Zyklusschutz) —
-    inkl. JSON, das in String-Werten steckt (wird erneut geparst)."""
+    """Yields all dicts in the result (recursive, depth cap, cycle guard) —
+    including JSON nested in string values (parsed again)."""
     seen: set[int] = set()
 
     def walk(node: Any, depth: int):
@@ -175,22 +175,22 @@ def _candidate_objects(obj: Any):
 
 
 def _idem(origin_task_id: str, task_ref: str) -> str:
-    """idempotency_key-Formel (§2.5): flow-<ursprungs-task-id>-<task-id>."""
+    """idempotency_key formula (§2.5): flow-<origin-task-id>-<task-id>."""
     return f"{IDEMPOTENCY_PREFIX}-{origin_task_id}-{task_ref}"
 
 
 def _task_result(view: dict) -> Any:
-    """Extrahiert das Result aus einem TaskView: erstes Stage-Result mit Inhalt.
+    """Extracts the result from a TaskView: first stage result with content.
 
-    T-005c (Envelope-Contract, design.md T-005a §2.2/§4.1): Der Handler-Result-
-    Envelope wird EXAKT EINMAL unwrappt — {"status": "completed", "result": X}
-    → X. Bare Results (legacy Nodes) bleiben unverändert (tolerant, bis die
-    ganze Fleet migriert ist). Genau-einmal-Gatter (D7): unwrappt NUR bei
-    dict + status == "completed" + inneres result ist dict; alles andere
-    (nackte Results, Error-Shapes, bare dicts mit status/result-Keys) geht
-    ungeändert durch. Idempotent per Konstruktion — aggregate[task_ref] hält
-    danach in BEIDEN Fällen das Resultat-Objekt, d. h. ${ref.result.path}
-    navigiert relative zum inneren result: ${img.result.artifact_id} →
+    T-005c (envelope contract, design.md T-005a §2.2/§4.1): the handler result
+    envelope is unwrapped EXACTLY ONCE — {"status": "completed", "result": X}
+    → X. Bare results (legacy nodes) pass through unchanged (tolerant until the
+    whole fleet is migrated). Exactly-once gate (D7): unwraps ONLY for
+    dict + status == "completed" + inner result is a dict; everything else
+    (bare results, error shapes, bare dicts with status/result keys) goes
+    through unchanged. Idempotent by construction — aggregate[task_ref] holds
+    in BOTH cases the result object afterwards, i.e. ${ref.result.path}
+    navigates relative to the inner result: ${img.result.artifact_id} →
     aggregate["img"]["artifact_id"].
     """
     for stage in view.get("stages") or []:
@@ -207,7 +207,7 @@ def _task_result(view: dict) -> Any:
 
 
 def _stage_status(view: dict) -> str:
-    """Aggregiert den Task-Status aus den Stages (failed schlägt alles)."""
+    """Aggregates the task status from the stages (failed beats everything)."""
     statuses = [s.get("status") for s in (view.get("stages") or []) if s.get("status")]
     if any(s == "failed" for s in statuses):
         return "failed"
@@ -219,7 +219,7 @@ def _stage_status(view: dict) -> str:
 
 
 def _task_error(view: dict) -> str:
-    """Extrahiert die Fehlermeldung aus einem gefailten TaskView."""
+    """Extracts the error message from a failed TaskView."""
     for stage in view.get("stages") or []:
         if stage.get("status") == "failed":
             return str(stage.get("error") or "unknown error")
@@ -227,18 +227,18 @@ def _task_error(view: dict) -> str:
 
 
 def _caps_snapshot(caps: dict[str, dict]) -> str:
-    """Kompakter, lesbarer Capability-Snapshot für den PLAN_PROMPT.
+    """Compact, readable capability snapshot for the PLAN_PROMPT.
 
-    T-004 (iowap-flow): enthält `result_path_hints` (dot-paths ins Ergebnis),
-    damit der Planner beim Datenweitergabe-Muster ${ref.result.path} valide
-    Pfade kennt und nicht raten muss.
-    T-005c: Hints sind Pfade RELATIV ZUM INNERNEN result des Handler-Result-
-    Envelopes (design.md T-005a §4.2) — also die Feldnamen dessen, was flow
-    nach dem Unwrap-once unter aggregate[task_ref] ablegt; der Planner baut
-    daraus valide ${ref.result.<hint>}-Templates.
+    T-004 (iowap-flow): includes `result_path_hints` (dot paths into the result)
+    so the planner knows valid paths for the data-passing pattern
+    ${ref.result.path} and doesn't have to guess.
+    T-005c: hints are paths RELATIVE TO THE INNER result of the handler result
+    envelope (design.md T-005a §4.2) — i.e. the field names of what flow
+    stores under aggregate[task_ref] after unwrap-once; the planner builds
+    valid ${ref.result.<hint>}-templates from them.
     """
     if not caps:
-        return "(keine Capabilities verfügbar)"
+        return "(no capabilities available)"
     lines: list[str] = []
     for name in sorted(caps):
         cap = caps.get(name) or {}
@@ -251,7 +251,7 @@ def _caps_snapshot(caps: dict[str, dict]) -> str:
 
 
 def _as_text(value: Any) -> str:
-    """Macht ein Result (str|dict|list) lesbar für die JSON-Extraktion."""
+    """Makes a result (str|dict|list) readable for the JSON extraction."""
     if value is None:
         return ""
     if isinstance(value, str):
@@ -260,16 +260,16 @@ def _as_text(value: Any) -> str:
 
 
 def _backoff_delay(consecutive_errors: int) -> float:
-    """Task 4b: 5s Grundtakt, ab POLL_BACKOFF_MAX_ERRORS exponentiell, Cap 60s."""
+    """Task 4b: 5s base interval, exponential from POLL_BACKOFF_MAX_ERRORS, cap 60s."""
     factor = 2 ** max(0, consecutive_errors - POLL_BACKOFF_MAX_ERRORS + 1)
     return min(POLL_INTERVAL_SECONDS * factor, POLL_BACKOFF_MAX_SECONDS)
 
 
 def _inject_flow(payload: dict, cap_info: dict | None, origin_task_id: str, task_ref: str) -> dict:
-    """Payload-Injection (Task 4 Step 3): 'flow': {origin_task_id, task_ref} — nur
-    wenn das input_schema der Capability kein unbekanntes Feld ablehnt bzw. ein
-    'flow'-Feld erlaubt; ohne input_schema im Snapshot wird injiziert
-    (Rückverfolgbarkeit, §2.5)."""
+    """Payload injection (task 4 step 3): 'flow': {origin_task_id, task_ref} — only
+    if the capability's input_schema doesn't reject an unknown field / allows a
+    'flow' field; without input_schema in the snapshot it is injected
+    (traceability, §2.5)."""
     schema = (cap_info or {}).get("input_schema")
     if isinstance(schema, dict):
         fields = schema.get("fields")
@@ -280,42 +280,42 @@ def _inject_flow(payload: dict, cap_info: dict | None, origin_task_id: str, task
     return child
 
 
-# ---- T-002: Template-Interpolation — Dateninjektion beim Submit -------------
+# ---- T-002: template interpolation — data injection at submit time ----------
 
-# Nur GENAU dieses Muster ist ein Template (keine Ausdrücke, Filter, Defaults):
-# ${<task_ref>.result.<dot-path>} — 'result' ist ein Literal-Segment.
+# Only EXACTLY this pattern is a template (no expressions, filters, defaults):
+# ${<task_ref>.result.<dot-path>} — 'result' is a literal segment.
 _TEMPLATE_PATTERN = r"\$\{([A-Za-z0-9_-]+)\.result\.([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)\}"
 TEMPLATE_RE = re.compile(_TEMPLATE_PATTERN)
 
 
 def _resolve_templates(payload: dict, aggregate: dict[str, Any]) -> dict:
-    """Löst ${ref.result.path}-Templates im Payload rekursiv auf (T-002):
-    dict-Values, List-Items, Strings.
+    """Resolves ${ref.result.path} templates in the payload recursively (T-002):
+    dict values, list items, strings.
 
-    Aggregate-Shape (T-005c, verifiziert gegen _task_result + den Join-Loop):
-    Das Aggregate speichert unter task_ref das NACKTE Stage-Resultat
-    (`aggregate[task_ref] = _task_result(view)`, runner.py Join-Loop) —
-    KEIN Wrapper. Der Handler-Result-Envelope (design.md T-005a §2.2) wird
-    von _task_result EXAKT EINMAL unwrappt (tolerant: bare Results legacy
-    Nodes gehen unverändert durch) — das Literal-Segment 'result' adressiert
-    genau diesen Aggregate-Eintrag, der Dot-Path danach navigiert im inneren
-    Resultat: ${img.result.artifact_id} → aggregate["img"]["artifact_id"].
-    result_path_hints sind folgerichtig Pfade relativ zum inneren result
-    (z. B. 'answer', NICHT 'result.answer').
+    Aggregate shape (T-005c, verified against _task_result + the join loop):
+    the aggregate stores the BARE stage result under task_ref
+    (`aggregate[task_ref] = _task_result(view)`, runner.py join loop) —
+    NO wrapper. The handler result envelope (design.md T-005a §2.2) is
+    unwrapped EXACTLY ONCE by _task_result (tolerant: bare results from legacy
+    nodes pass through unchanged) — the literal segment 'result' addresses
+    exactly this aggregate entry, the dot path afterwards navigates in the inner
+    result: ${img.result.artifact_id} → aggregate["img"]["artifact_id"].
+    result_path_hints are consequently paths relative to the inner result
+    (e.g. 'answer', NOT 'result.answer').
 
-    Regeln (Plan T-002): String, der exakt EINEM Template entspricht →
-    nativer Wert (Typ bleibt erhalten); Template eingebettet in größerem
-    String → alle Treffer als str() substituieren (dict/list via
-    json.dumps); fehlender Task im Aggregate oder nicht auflösbarer Path →
-    FlowError (fail-fast D6) mit Template, referenziertem Task und
-    depends_on-Hinweis. Nur ${ref.result.path} ist ein Template — alles
-    andere bleibt literal.
+    Rules (plan T-002): a string matching exactly ONE template →
+    native value (type is preserved); template embedded in a larger
+    string → substitute all matches as str() (dict/list via
+    json.dumps); missing task in the aggregate or unresolvable path →
+    FlowError (fail-fast D6) with template, referenced task and
+    depends_on hint. Only ${ref.result.path} is a template — everything
+    else stays literal.
     """
     return _resolve_templates_value(payload, aggregate)
 
 
 def _resolve_templates_value(value: Any, aggregate: dict[str, Any]) -> Any:
-    """Rekursion über dict-Values, List-Items; Strings werden aufgelöst."""
+    """Recursion over dict values, list items; strings are resolved."""
     if isinstance(value, dict):
         return {k: _resolve_templates_value(v, aggregate) for k, v in value.items()}
     if isinstance(value, list):
@@ -326,7 +326,7 @@ def _resolve_templates_value(value: Any, aggregate: dict[str, Any]) -> Any:
 
 
 def _resolve_templates_string(text: str, aggregate: dict[str, Any]) -> Any:
-    """Ein String: exakt EIN Template → nativer Wert; sonst alle Treffer als str()."""
+    """One string: exactly ONE template → native value; otherwise all matches as str()."""
     if TEMPLATE_RE.search(text) is None:
         return text
     exact = TEMPLATE_RE.fullmatch(text)
@@ -339,8 +339,8 @@ def _resolve_templates_string(text: str, aggregate: dict[str, Any]) -> Any:
 
 
 def _template_lookup(ref: str, path: str, template: str, aggregate: dict[str, Any]) -> Any:
-    """Löst ref + Dot-Path gegen das Aggregate auf — fail-fast D6 mit klarem
-    Grund: das Template, der referenzierte Task und der depends_on-Hinweis."""
+    """Resolves ref + dot path against the aggregate — fail-fast D6 with a clear
+    reason: the template, the referenced task and the depends_on hint."""
     if ref not in aggregate:
         raise FlowError(
             f"template {template} unresolved: task {ref!r} not in aggregate — "
@@ -358,17 +358,17 @@ def _template_lookup(ref: str, path: str, template: str, aggregate: dict[str, An
 
 
 def _template_str(value: Any) -> str:
-    """Eingebettete Substitution: Skalare via str(), dict/list via json.dumps."""
+    """Embedded substitution: scalars via str(), dict/list via json.dumps."""
     if isinstance(value, (dict, list)):
         return json.dumps(value)
     return str(value)
 
 
 def _poll_task(api: RelayApi, task_id: str, tick) -> tuple[str, Any]:
-    """Pollt EINEN Task bis done/failed (D5). tick() pro Runde: Budget + Keepalive.
+    """Polls ONE task until done/failed (D5). tick() per round: budget + keepalive.
 
-    Returns ("completed", result) bzw. ("failed", error). Nach Backoff-Erschöpfung
-    (Task 4b) → FlowError OHNE fail_stage: Server-Release-Mechanik übernimmt.
+    Returns ("completed", result) resp. ("failed", error). After backoff exhaustion
+    (task 4b) → FlowError WITHOUT fail_stage: the server release mechanics take over.
     """
     errors = 0
     while True:
@@ -429,36 +429,36 @@ def run(
     node_id: str,
     options: dict | None = None,
 ) -> dict:
-    """Führt den kompletten Flow aus: Plan-Phase → Validierung → Fan-out → Join → Aggregate.
+    """Runs the complete flow: plan phase → validation → fan-out → join → aggregate.
 
-    T-003-Modi (payload['mode'], sauber getrennt vom Classic-Lauf):
-      - 'list_flows': Katalogabfrage (kein Plan-Kind, kein Fan-out).
-      - 'run_flow':   vorgefertigter Flow aus dem Katalog — überspringt die
-        Plan-Phase, ${input.path}-Parameter, sonst identischer Fan-out/Join.
-      - 'save_flow':  befördert einen Historie-Eintrag dauerhaft in den Katalog.
-    Ohne 'mode' (Default): klassischer Lauf (Plan-Phase via agent.ai, FROZEN).
+    T-003 modes (payload['mode'], cleanly separated from the classic run):
+      - 'list_flows': catalog query (no plan child, no fan-out).
+      - 'run_flow':   prebuilt flow from the catalog — skips the plan
+        phase, ${input.path} parameters, otherwise identical fan-out/join.
+      - 'save_flow':  promotes a history entry permanently into the catalog.
+    Without 'mode' (default): classic run (plan phase via agent.ai, FROZEN).
 
-    Semantik (Plan Task 4, fail-fast D6):
-      0. Plan-Phase: Note 'longrun' 'flow started' → Discovery-Snapshot → PLAN_PROMPT →
-         Planungs-Kind an agent.ai (idempotency_key flow-<origin>-_plan, Name
-         flow:_plan) → Note 'planning started' → poll bis done → Result lenient
-         extrahieren. Planungs-Kind failed oder kein valides Plan-JSON → D9:
-         1 Retry mit Validerings-Fehler im Prompt, 2. Versuch failt → Flow failed.
-      1. Validierung: parse_plan + validate_capabilities_live gegen FRISCHEN Snapshot
-         (Race Safety-Net).
-      2. Topologisch: alle Tasks mit erfüllten deps gleichzeitig submitten (echtes
-         Parallel-Fan-out), idempotency_key flow-<origin-task-id>-<task-id>.
-      3. Template-Auflösung ${ref.result.path} (T-002, Dateninjektion aus dem
-         laufenden Aggregate) + Payload-Injection: 'flow': {origin_task_id,
-         task_ref} — nur wenn das input_schema der Capability es erlaubt,
-         sonst weglassen.
-      4. Poll-Loop 5s pro Kind; Keepalive-Note alle 600s unabhängig vom Poll-Takt:
-         'flow progress: done=K/N' (Lease-Refresh am Ursprungs-Task, T-154).
-      5. Kind failed (permanent) → gesamter Flow failt: Note 'flow failed at
+    Semantics (plan task 4, fail-fast D6):
+      0. Plan phase: note 'longrun' 'flow started' → discovery snapshot → PLAN_PROMPT →
+         planning child to agent.ai (idempotency_key flow-<origin>-_plan, name
+         flow:_plan) → note 'planning started' → poll until done → leniently
+         extract the result. Planning child failed or no valid plan JSON → D9:
+         1 retry with the validation error in the prompt, 2nd attempt fails → flow failed.
+      1. Validation: parse_plan + validate_capabilities_live against a FRESH snapshot
+         (race safety net).
+      2. Topologically: submit all tasks with satisfied deps simultaneously (real
+         parallel fan-out), idempotency_key flow-<origin-task-id>-<task-id>.
+      3. Template resolution ${ref.result.path} (T-002, data injection from the
+         running aggregate) + payload injection: 'flow': {origin_task_id,
+         task_ref} — only if the capability's input_schema allows it,
+         otherwise omit.
+      4. Poll loop 5s per child; keepalive note every 600s independent of the poll cadence:
+         'flow progress: done=K/N' (lease refresh on the origin task, T-154).
+      5. Child failed (permanent) → the whole flow fails: note 'flow failed at
          <task-ref> (<capability>): <error>' → fail_stage() → FlowError.
-      6. Alle done → aggregate {task_ref: result} → complete_stage() mit
+      6. All done → aggregate {task_ref: result} → complete_stage() with
          {'status': 'completed', 'aggregate': ..., 'summary': plan.summary}.
-      7. Nach jeder Änderung am Fan-out-Zustand: Note kind=info am Ursprungs-Task.
+      7. After every fan-out state change: note kind=info on the origin task.
     """
     options = options or {}
     # T-005d: accept all three handler_runner generations (strict/mirrored/
@@ -467,7 +467,7 @@ def run(
     payload = _envelope_payload(payload)
     mode = payload.get("mode")
 
-    # -- T-003: sauber getrennte Modi (kein Plan-Kind, kein Fan-out) -----------
+    # -- T-003: cleanly separated modes (no plan child, no fan-out) ------------
     if mode == "list_flows":
         caps = fetch_capabilities(base_url, token_file)
         entries = list_catalog_flows(caps)
@@ -501,7 +501,7 @@ def run(
         if not isinstance(raw_flow, str) or not raw_flow:
             raise FlowError("run_flow payload missing 'flow' (catalog name)")
         flow_input = payload.get("input") if isinstance(payload.get("input"), dict) else {}
-        # History-Cleanup fail-soft beim Flow-Start (beide Regeln: Alter + Anzahl)
+        # History cleanup fail-soft at flow start (both rules: age + count)
         try:
             cleanup_history()
         except OSError:
@@ -514,14 +514,14 @@ def run(
     elif not task_text:
         raise FlowError("flow payload missing 'task' (original request)")
     if not task_text and mode == "run_flow":
-        task_text = f"run flow {raw_flow}"  # Notes/Naming-Grundlage
+        task_text = f"run flow {raw_flow}"  # basis for notes/naming
     max_flow_seconds = int(options.get("max_flow_seconds") or DEFAULT_MAX_FLOW_SECONDS)
 
     started = time.monotonic()
     keepalive_due = started + KEEPALIVE_INTERVAL_SECONDS
 
     def tick(progress_msg: str) -> None:
-        """Budget-Check (fail_stage bei Überschreitung) + unabhängiger Keepalive-Timer."""
+        """Budget check (fail_stage when exceeded) + independent keepalive timer."""
         nonlocal keepalive_due
         now = time.monotonic()
         if now - started > max_flow_seconds:
@@ -531,14 +531,14 @@ def run(
             api.add_note(origin_task_id, progress_msg, kind="longrun")
             keepalive_due = now + KEEPALIVE_INTERVAL_SECONDS
 
-    # -- Phase 0: Planung via agent.ai (D2 = A: Prompt + Cap-Snapshot vom Handler) --
+    # -- Phase 0: planning via agent.ai (D2 = A: prompt + cap snapshot from the handler) --
     api.add_note(origin_task_id, "flow started", kind="longrun")
     caps = fetch_capabilities(base_url, token_file)
     plan: Plan | None = None
     feedback: str | None = None
     if mode == "run_flow":
-        # T-003: vorgefertigter Flow — Plan-Phase entfällt, Input-Templates werden
-        # in eine Kopie des Payloads aufgelöst (Original-Katalog bleibt unverändert).
+        # T-003: prebuilt flow — no plan phase; input templates are resolved
+        # into a copy of the payload (the original catalog stays unchanged).
         try:
             plan = parse_plan(raw_plan)
         except PlanError as e:
@@ -565,22 +565,22 @@ def run(
         plan = parse_plan(input_resolved_plan)
         api.add_note(origin_task_id, f"flow started from catalog: {plan.name}", kind="longrun")
     else:
-        for attempt in (1, 2):  # D9: 1 Retry mit Validerings-Fehler im Prompt
+        for attempt in (1, 2):  # D9: 1 retry with the validation error in the prompt
             prompt = build_plan_prompt(task_text, _caps_snapshot(caps))
             if feedback:
                 prompt += (
-                    "\n\nDer letzte Plan-Versuch war ungültig. Fehler:\n"
-                    f"{feedback}\nBehebe diesen Fehler und antworte erneut NUR mit dem Plan-JSON."
+                    "\n\nThe last plan attempt was invalid. Error:\n"
+                    f"{feedback}\nFix this error and answer again ONLY with the plan JSON."
                 )
             resp = api.submit_simple_task(
                 capability=PLAN_CAPABILITY,
                 payload={"task": prompt},
-                # D9-Retry braucht pro Attempt einen NEUEN Idempotency-Key: mit
-                # konstantem Key liefert der Server dasselbe, bereits fertig-
-                # gefailte Planungs-Kind zurück und der Feedback-Retry wäre tot
-                # (Live-Bug 2026-09-06). Attempt 1 behält die §2.5-Form — Resume
-                # nach Handler-Crash startet wieder bei Attempt 1 und findet das
-                # fertige Kind über den unveränderten Key.
+                # The D9 retry needs a NEW idempotency key per attempt: with a
+                # constant key the server returns the same, already fully
+                # failed planning child and the feedback retry would be dead
+                # (live bug 2026-09-06). Attempt 1 keeps the §2.5 shape — resume
+                # after a handler crash starts again at attempt 1 and finds the
+                # finished child via the unchanged key.
                 name=f"{TASK_NAME_PREFIX}{PLAN_TASK_REF}{'' if attempt == 1 else f'-{attempt}'}",
                 idempotency_key=_idem(origin_task_id, PLAN_TASK_REF) + ("" if attempt == 1 else f"-{attempt}"),
             )
@@ -604,14 +604,14 @@ def run(
         if plan is None:
             raise FlowError(f"plan phase failed: {feedback}")
 
-    # -- Phase 1: Live-Validierung gegen FRISCHEN Snapshot (Race Safety-Net) --
+    # -- Phase 1: live validation against a FRESH snapshot (race safety net) --
     caps_fresh = fetch_capabilities(base_url, token_file)
     try:
         validate_capabilities_live(plan, caps_fresh)
     except PlanError as e:
         raise FlowError(str(e)) from e
 
-    # -- Phase 2-4: topologisches Fan-out + Join-Loop --
+    # -- Phases 2-4: topological fan-out + join loop --
     remaining = {t.id: t for t in plan.tasks}
     open_deps = {t.id: set(t.depends_on) for t in plan.tasks}
     dependents = {t.id: [] for t in plan.tasks}
@@ -630,9 +630,9 @@ def run(
             raise FlowError(f"plan phase failed: fan-out deadlock on {sorted(remaining)}")
         for tid in ready:
             t = remaining.pop(tid)
-            # T-002: Template-Auflösung VOR _inject_flow — flow-Metadaten kommen
-            # last und werden nie interpoliert. FlowError bekommt den betroffenen
-            # task_ref als Kontext (fail-fast D6: kein Submit, keine Nachfolger).
+            # T-002: template resolution BEFORE _inject_flow — flow metadata comes
+            # last and is never interpolated. The FlowError carries the affected
+            # task_ref as context (fail-fast D6: no submit, no successors).
             try:
                 resolved_payload = _resolve_templates(t.payload, aggregate)
             except FlowError as e:
@@ -667,7 +667,7 @@ def run(
                         f"relay unreachable: {consecutive_errors} consecutive poll errors "
                         "(backoff exhausted)"
                     ) from None
-                break  # Backoff-Sleep unten, dann neue Runde
+                break  # backoff sleep below, then a new round
             consecutive_errors = 0
             status = _stage_status(view)
             if status == "failed":
@@ -679,7 +679,7 @@ def run(
                 for c in dependents[ref]:
                     open_deps[c].discard(ref)
 
-        # -- Phase 5: fail-fast D6 — kein Submit von Nachfolgern --
+        # -- Phase 5: fail-fast D6 — no submit of successors --
         if failed is not None:
             t = plan.by_id[failed[0]]
             msg = f"flow failed at {t.id} ({t.capability}): {failed[1]}"
@@ -692,7 +692,7 @@ def run(
         elif child_ids or remaining:
             time.sleep(POLL_INTERVAL_SECONDS)
 
-    # -- Phase 6: Aggregate + Complete am Ursprungs-Stage --
+    # -- Phase 6: aggregate + complete on the origin stage --
     # T-005d: conforming Response Envelope — flow/aggregate/summary move
     # under "result" (design.md §6; the old flat shape collided with the
     # contract → normalize error "completed without result"). The "error"
@@ -709,8 +709,8 @@ def run(
         },
     }
     api.complete_stage(origin_task_id, origin_stage_id, result)
-    # T-003: erfolgreiche Läufe (klassisch UND run_flow) landen in der Historie —
-    # fail-soft: History-Ausfall failt den abgeschlossenen Flow nie.
+    # T-003: successful runs (classic AND run_flow) land in the history —
+    # fail-soft: a history failure never fails the completed flow.
     try:
         history_id = record_history(
             flow_name=plan.name,

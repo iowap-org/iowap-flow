@@ -1,11 +1,11 @@
 # tests/test_flow_relay_api.py — Task 3 (Relay-Task-Client) via httpx.MockTransport
-"""Echte Tests gegen RelayApi mit httpx.MockTransport (kein echter Server nötig).
+"""Real tests against RelayApi with httpx.MockTransport (no real server needed).
 
-Abgedeckt laut Plan Task 3:
-  - submit setzt idempotency_key, task_name-Präfix "flow:..." (§2.5)
-  - get_task parst TaskView (stages mit status/result)
-  - add_note sendet kind
-  - complete/fail sprechen den richtigen Endpoint mit node_id aus Env-Kontext an
+Covered per plan task 3:
+  - submit sets idempotency_key, task_name prefix "flow:..." (§2.5)
+  - get_task parses TaskView (stages with status/result)
+  - add_note sends kind
+  - complete/fail address the right endpoint with node_id from env context
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ BASE = "http://relay.test:8788"
 
 
 class Recorded:
-    """Sammelt Requests in .calls und beantwortet sie aus .routes."""
+    """Collects requests in .calls and answers them from .routes."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, dict | None]] = []  # (method, url, body)
@@ -39,9 +39,9 @@ class Recorded:
 
 @pytest.fixture
 def mock_api(monkeypatch, request):
-    """Factory: _install_transport(handler) → RelayApi gegen MockTransport."""
+    """Factory: _install_transport(handler) → RelayApi against MockTransport."""
     def factory(handler, token_file: str = "/nonexistent-token-file") -> RelayApi:
-        api = RelayApi(f"{BASE}/", token_file, timeout=5.0)  # trailing slash wird gertrimmt
+        api = RelayApi(f"{BASE}/", token_file, timeout=5.0)  # trailing slash gets trimmed
         client = httpx.Client(transport=httpx.MockTransport(handler))
 
         def fake_request(method, url, **kwargs):
@@ -55,7 +55,7 @@ def mock_api(monkeypatch, request):
 
 
 def test_submit_sets_idempotency_key_and_task_name_prefix(mock_api):
-    # submit setzt idempotency_key; task_name-Präfix "flow:<flow-name>:<task-id>" (§2.5)
+    # submit sets idempotency_key; task_name prefix "flow:<flow-name>:<task-id>" (§2.5)
     rec = Recorded()
     rec.add("POST", f"{BASE}/relay/v2/scheduler/task-simple",
             {"task_id": "t-1", "stage_id": "st-1"})
@@ -75,18 +75,18 @@ def test_submit_sets_idempotency_key_and_task_name_prefix(mock_api):
     assert (method, url) == ("POST", f"{BASE}/relay/v2/scheduler/task-simple")
     assert body["capability"] == "image.generate.mflux"
     assert body["payload"] == {"prompt": "cat"}
-    # Name trägt das flow:-Präfix (Kinder im Dashboard gruppierbar, §2.5)
+    # name carries the flow: prefix (children groupable in the dashboard, §2.5)
     assert body["name"] == "flow:produktbilder:resize_a"
     assert body["name"].startswith("flow:")
     assert body["idempotency_key"] == "flow-origin-1-resize_a"
     assert body["priority"] == 5
     assert body["timeout_seconds"] == 3600
-    # owner_node_id darf NICHT gesetzt sein (Kinder dürfen überall laufen, §2.5)
+    # owner_node_id must NOT be set (children may run anywhere, §2.5)
     assert "owner_node_id" not in body
 
 
 def test_submit_without_optional_fields_omits_them(mock_api):
-    # idempotency_key=None / timeout_seconds=None → Felder fehlen im Body
+    # idempotency_key=None / timeout_seconds=None → fields missing from the body
     rec = Recorded()
     rec.add("POST", f"{BASE}/relay/v2/scheduler/task-simple", {"task_id": "t-2"})
     api = mock_api(rec.handler)
@@ -100,7 +100,7 @@ def test_submit_without_optional_fields_omits_them(mock_api):
 
 
 def test_get_task_parses_taskview(mock_api):
-    # get_task parst TaskView (stages mit status/result)
+    # get_task parses TaskView (stages with status/result)
     taskview = {
         "id": "task-42",
         "name": "flow:demo:a",
@@ -126,7 +126,7 @@ def test_get_task_parses_taskview(mock_api):
 
 
 def test_add_note_sends_kind(mock_api):
-    # add_note sendet {"message": ..., "kind": ...} an /tasks/{id}/notes
+    # add_note sends {"message": ..., "kind": ...} to /tasks/{id}/notes
     rec = Recorded()
     rec.add("POST", f"{BASE}/relay/v2/scheduler/tasks/task-42/notes", {})
     api = mock_api(rec.handler)
@@ -139,7 +139,7 @@ def test_add_note_sends_kind(mock_api):
 
 
 def test_add_note_defaults_to_info_kind(mock_api):
-    # kind-Default "info" (Dashboard-Trail, Plan §2.5)
+    # kind default "info" (dashboard trail, plan §2.5)
     rec = Recorded()
     rec.add("POST", f"{BASE}/relay/v2/scheduler/tasks/task-42/notes", {})
     api = mock_api(rec.handler)
@@ -151,7 +151,7 @@ def test_add_note_defaults_to_info_kind(mock_api):
 
 
 def test_complete_stage_hits_right_endpoint_with_node_id(mock_api, monkeypatch):
-    # POST /relay/v2/scheduler/stages/{stage_id}/complete mit node_id aus Env-Kontext
+    # POST /relay/v2/scheduler/stages/{stage_id}/complete with node_id from env context
     monkeypatch.setenv("RELAY_NODE_ID", "flow-runner-01")
     rec = Recorded()
     rec.add("POST", f"{BASE}/relay/v2/scheduler/stages/st-9/complete", {})
@@ -169,7 +169,7 @@ def test_complete_stage_hits_right_endpoint_with_node_id(mock_api, monkeypatch):
 
 
 def test_fail_stage_hits_right_endpoint(mock_api, monkeypatch):
-    # fail_stage: same endpoint, {"error": error} statt result
+    # fail_stage: same endpoint, {"error": error} instead of result
     monkeypatch.setenv("RELAY_NODE_ID", "flow-runner-01")
     rec = Recorded()
     rec.add("POST", f"{BASE}/relay/v2/scheduler/stages/st-9/complete", {})
@@ -187,7 +187,7 @@ def test_fail_stage_hits_right_endpoint(mock_api, monkeypatch):
 
 
 def test_authorization_header_from_token_file(mock_api, tmp_path):
-    # Bearer wird aus token_file gelesen, wenn die Datei existiert (§2.4 Env-Contract)
+    # bearer is read from token_file when the file exists (§2.4 env contract)
     token_file = tmp_path / "relay.token"
     token_file.write_text("secret-token-123\n")
     captured = {}
@@ -203,7 +203,7 @@ def test_authorization_header_from_token_file(mock_api, tmp_path):
 
 
 def test_http_error_raises(mock_api):
-    # raise_for_status: Relay-Fehler → httpx.HTTPStatusError (fail-fast, D6)
+    # raise_for_status: relay error → httpx.HTTPStatusError (fail-fast, D6)
     rec = Recorded()
     rec.add("GET", f"{BASE}/relay/v2/scheduler/tasks/missing", {"detail": "not found"}, status=404)
     api = mock_api(rec.handler)

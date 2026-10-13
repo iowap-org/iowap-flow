@@ -1,5 +1,5 @@
-# tests/test_flow_caps_snapshot.py — T-004 (iowap-flow): _caps_snapshot zeigt
-# result_path_hints, damit der Planner valide ${ref.result.path}-Pfade kennt.
+# tests/test_flow_caps_snapshot.py — T-004 (iowap-flow): _caps_snapshot shows
+# result_path_hints so the planner knows valid ${ref.result.path} paths.
 from flow_node.runner import _caps_snapshot
 
 
@@ -26,9 +26,9 @@ def test_caps_snapshot_hints_multiple_and_empty():
     }
     out = _caps_snapshot(caps)
     assert "a.ai" in out and "result.answer, result.text" in out
-    assert "- b.ai (available: True)" in out  # leere Hints → kein Suffix
-    assert "- c.ai (available: True)" in out  # kein List-Typ → kein Suffix
+    assert "- b.ai (available: True)" in out  # empty hints → no suffix
+    assert "- c.ai (available: True)" in out  # not a list type → no suffix
 
 
 def test_caps_snapshot_empty():
-    assert _caps_snapshot({}) == "(keine Capabilities verfügbar)"
+    assert _caps_snapshot({}) == "(no capabilities available)"

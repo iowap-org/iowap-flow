@@ -35,7 +35,7 @@ from flow_node.relay_api import RelayApi
 from flow_node.runner import run
 
 BASE = "http://relay.test"
-TOKEN = "/tmp/flow-test-token"  # existiert nicht → kein Authorization-Header
+TOKEN = "/tmp/flow-test-token"  # does not exist → no Authorization header
 ORIGIN_TASK = "task-origin-1"
 ORIGIN_STAGE = "stage-origin-1"
 NODE = "flow-runner-01"
@@ -390,5 +390,5 @@ def test_mode_dispatch_inside_envelope_input(monkeypatch, tmp_path):
         BASE, TOKEN, ORIGIN_TASK, ORIGIN_STAGE, NODE,
     )
     assert result["status"] == "completed"
-    # KEIN Planungs-Kind: genau so viele submits wie Plan-Tasks (a)
+    # NO planning child: exactly as many submits as plan tasks (a)
     assert len(submits) == 1

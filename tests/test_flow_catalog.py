@@ -1,4 +1,4 @@
-# tests/test_flow_catalog.py — T-003: Katalog, Historie (Cleanup beide Regeln), ${input}-Templates
+# tests/test_flow_catalog.py — T-003: catalog, history (cleanup, both rules), ${input}-templates
 import json
 import os
 import time
@@ -36,7 +36,7 @@ def dirs(tmp_path, monkeypatch):
     return tmp_path
 
 
-# ---- Katalog ---------------------------------------------------------------
+# ---- Catalog ----------------------------------------------------------------
 
 def test_list_flows_reports_available_status(dirs):
     (dirs / "templates" / "demo.json").write_text(json.dumps(FLOW_JSON))
@@ -71,7 +71,7 @@ def test_load_flow_validates_name_and_missing(dirs):
         load_flow("../etc/passwd")
 
 
-# ---- Historie + save_flow ---------------------------------------------------
+# ---- History + save_flow ----------------------------------------------------
 
 def test_record_and_load_history(dirs):
     hid = record_history("demo", FLOW_JSON, {"a": 1}, "task-9")
@@ -85,7 +85,7 @@ def test_record_and_load_history(dirs):
 
 def test_cleanup_history_removes_old_and_overcount(dirs):
     d = dirs / "history"
-    # alt (30 Tage), jung, plus 55 weitere junge Einträge
+    # old (30 days), young, plus 55 more young entries
     old = d / "old.json"
     old.write_text("{}")
     for i in range(55):
@@ -94,7 +94,7 @@ def test_cleanup_history_removes_old_and_overcount(dirs):
     os.utime(old, (cutoff, cutoff))
     removed = cleanup_history(max_age_days=14, max_count=50)
     assert removed["removed_age"] == 1  # old.json
-    assert removed["removed_count"] == 5  # 55 junge Einträge, Cap 50
+    assert removed["removed_count"] == 5  # 55 young entries, cap 50
     assert len(list(d.glob("*.json"))) == 50
 
 
@@ -110,17 +110,17 @@ def test_save_flow_promotes_history_to_catalog(dirs):
     assert load_flow("demo")["name"] == "demo"
 
 
-# ---- ${input.path}-Templates -------------------------------------------------
+# ---- ${input.path} templates -------------------------------------------------
 
 def test_resolve_input_exact_and_embedded():
-    fi = {"stadt": "Leipzig", "n": 3, "opts": {"v": True}}
-    assert resolve_input_templates("${input.stadt}", fi) == "Leipzig"
+    fi = {"city": "Leipzig", "n": 3, "opts": {"v": True}}
+    assert resolve_input_templates("${input.city}", fi) == "Leipzig"
     assert resolve_input_templates("${input.n}", fi) == 3
     assert resolve_input_templates("${input.opts.v}", fi) is True
     assert resolve_input_templates(
-        "Wetter für ${input.stadt} mit ${input.n} Tagen", fi
-    ) == "Wetter für Leipzig mit 3 Tagen"
-    assert resolve_input_templates("kein template", fi) == "kein template"
+        "Weather for ${input.city} with ${input.n} days", fi
+    ) == "Weather for Leipzig with 3 days"
+    assert resolve_input_templates("no template", fi) == "no template"
 
 
 def test_resolve_input_missing_path_fails():

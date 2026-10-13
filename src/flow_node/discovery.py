@@ -1,7 +1,7 @@
-"""Discovery-Client für flow.run: holt Live-Capabilities vom Relay.
+"""Discovery client for flow.run: fetches live capabilities from the relay.
 
-Frozen Contract: Task 2 in .hermes/plans/flow-run-mvp.md (Pitfall #14:
-available=false gilt als „jetzt nicht ausführbar" → fail-fast, D6).
+Frozen contract: task 2 in .hermes/plans/flow-run-mvp.md (pitfall #14:
+available=false counts as "not executable right now" → fail-fast, D6).
 """
 from __future__ import annotations
 
@@ -16,9 +16,9 @@ from .token_store import load_bearer_token
 def fetch_capabilities(base_url: str, token_file: str, timeout: float = 10.0) -> dict[str, dict]:
     """GET /relay/v2/discovery/capabilities → {cap_name: cap_obj}.
 
-    Server-Formate (beide unterstützt):
-    - {"capabilities": [{name, available, ...}, ...]}  (Liste, live belegt)
-    - {cap_name: {available, ...}, ...}                (altes dict-Format)
+    Server formats (both supported):
+    - {"capabilities": [{name, available, ...}, ...]}  (list, live shape)
+    - {cap_name: {available, ...}, ...}                (legacy dict format)
     """
     headers = {}
     token_path = Path(token_file)
@@ -33,11 +33,11 @@ def fetch_capabilities(base_url: str, token_file: str, timeout: float = 10.0) ->
     entries = data.get("capabilities", data) if isinstance(data, dict) else data
     caps: dict[str, dict] = {}
     if isinstance(entries, dict):
-        # Altes Format: name -> info (bool oder dict).
+        # Legacy format: name -> info (bool or dict).
         for name, info in entries.items():
             caps[name] = info if isinstance(info, dict) else {"available": bool(info)}
     elif isinstance(entries, list):
-        # Live-Format: Liste von Capability-Objekten mit "name".
+        # Live format: list of capability objects with "name".
         for item in entries:
             if isinstance(item, dict) and item.get("name"):
                 caps[str(item["name"])] = item
@@ -45,7 +45,7 @@ def fetch_capabilities(base_url: str, token_file: str, timeout: float = 10.0) ->
 
 
 def validate_capabilities_live(plan: Plan, caps: dict[str, dict]) -> None:
-    """Failt mit eindeutiger Meldung, wenn eine Plan-Cap fehlt oder kein verfügbarer Node existiert."""
+    """Fails with a distinct message when a plan cap is missing or no available node exists."""
     missing, unavailable = [], []
     for t in plan.tasks:
         info = caps.get(t.capability)

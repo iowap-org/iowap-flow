@@ -1,20 +1,20 @@
 #!/bin/sh
 # entrypoint.sh — iowap-flow (Plan Task 6)
 #
-# Läuft als root und droppt zu appuser (Deploy-Kontrakt: Named-Volume ist beim
-# ersten Start root:root → chown nötig, dann setpriv als unprivilegierter User).
+# Runs as root and drops to appuser (deploy contract: on first start the
+# named volume is root:root → chown needed, then setpriv as an unprivileged user).
 #
-# 1. Kopiert das Profil bei JEDEM Start nach ~/.relay/node.yaml (Pitfall #23:
-#    Profil liegt im Image, nicht im Volume — Volume hält nur Identität/State).
-# 2. Bootstrapt die Node-Identität, falls das Volume leer ist (Pitfall #21):
-#    node-cli node register (T-178) ist chicken-and-egg-frei, erstellt meta+token
-#    und bricht bei existierender Identität ab, ohne etwas zu ändern — deshalb
-#    das Vorher-Checken statt --force.
-# 3. Startet den Daemon im Vordergrund.
+# 1. Copies the profile to ~/.relay/node.yaml on EVERY start (pitfall #23:
+#    the profile lives in the image, not the volume — the volume only holds identity/state).
+# 2. Bootstraps the node identity if the volume is empty (pitfall #21):
+#    node-cli node register (T-178) is chicken-and-egg-free, creates meta+token
+#    and aborts on an existing identity without changing anything — hence
+#    the check beforehand instead of --force.
+# 3. Starts the daemon in the foreground.
 #
-# Deployment-Konvention (wie base-image entrypoint, T-148a):
-#   1. NODE_NAME — frei wählbar (Default: Container-Hostname)
-#   2. RELAY_URL — Pflicht; wenn unset, mDNS-Discovery (Fallback im Base-Pattern)
+# Deployment convention (like the base-image entrypoint, T-148a):
+#   1. NODE_NAME — freely selectable (default: container hostname)
+#   2. RELAY_URL — required; when unset, mDNS discovery (fallback of the base pattern)
 set -eu
 
 APP_HOME=/home/appuser
@@ -23,8 +23,8 @@ RELAY_DIR="$APP_HOME/.relay"
 if [ "$(id -u)" = "0" ]; then
     mkdir -p "$RELAY_DIR"
     chown -R appuser:appuser "$APP_HOME"
-    # Kein --reset-env: es würde RELAY_URL/NODE_NAME/HOME aus dem Image-Env
-    # mitlöschen. HOME=/home/appuser kommt aus dem Dockerfile-ENV.
+    # No --reset-env: it would also wipe RELAY_URL/NODE_NAME/HOME from the image env.
+    # HOME=/home/appuser comes from the Dockerfile ENV.
     exec setpriv --reuid=appuser --regid=appuser --init-groups /entrypoint.sh "$@"
 fi
 

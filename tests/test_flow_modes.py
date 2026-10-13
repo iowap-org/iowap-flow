@@ -1,4 +1,4 @@
-# tests/test_flow_modes.py — T-003: Modus-Dispatch in run() über MockTransport
+# tests/test_flow_modes.py — T-003: mode dispatch in run() via MockTransport
 import json
 
 import pytest
@@ -43,7 +43,7 @@ def test_list_flows_completes_without_plan_child(monkeypatch, tmp_path):
             return _caps_response(VALID_CAPS)
         if "/stages/" in url and "complete" in url:
             return _ok()
-        pytest.fail(f"unexpected request: {url}")  # kein submit, kein poll
+        pytest.fail(f"unexpected request: {url}")  # no submit, no poll
 
     _patch_http(monkeypatch, handler)
     api = RelayApi(BASE, TOKEN)
@@ -51,7 +51,7 @@ def test_list_flows_completes_without_plan_child(monkeypatch, tmp_path):
     assert result["status"] == "completed"
     assert result["result"]["flows"][0]["name"] == "demo"
     assert result["result"]["flows"][0]["available"] is True
-    assert not any("tasks" in u and "submit" in u for _, u in seen)  # kein Kind submitted
+    assert not any("tasks" in u and "submit" in u for _, u in seen)  # no child submitted
 
 
 def test_save_flow_completes_from_history(monkeypatch, tmp_path):
@@ -72,7 +72,7 @@ def test_save_flow_completes_from_history(monkeypatch, tmp_path):
     result = _run_flow(api, {"mode": "save_flow", "history_id": hid}, monkeypatch, tmp_path)
     assert result["status"] == "completed"
     assert result["result"]["flow"] == "demo"
-    assert load_history_record(hid)["history_id"] == hid  # Historie bleibt (Cleanup räumt später)
+    assert load_history_record(hid)["history_id"] == hid  # history stays (cleanup cleans later)
 
 
 def test_save_flow_missing_history_fails_stage(monkeypatch, tmp_path):
@@ -121,10 +121,10 @@ def test_run_flow_skips_plan_phase_and_records_history(monkeypatch, tmp_path):
         monkeypatch, tmp_path,
     )
     assert result["status"] == "completed"
-    # KEIN Planungs-Kind: genau so viele submits wie Plan-Tasks (a, b)
+    # NO planning child: exactly as many submits as plan tasks (a, b)
     assert len(submits) == 2
     assert not any(json.dumps(s).find("flow:_plan") != -1 for s in submits)
-    # Historie geschrieben
+    # history written
     (tmp_path / "history" / "demo.json").exists()  # dir exists; record:
     import os
     records = [f for f in os.listdir(tmp_path / "history") if f.endswith(".json")]
@@ -135,7 +135,7 @@ def test_run_flow_skips_plan_phase_and_records_history(monkeypatch, tmp_path):
 
 def test_run_flow_input_templates_resolve(monkeypatch, tmp_path):
     plan_with_input = json.loads(json.dumps(PLAN))
-    plan_with_input["tasks"][0]["payload"] = {"city": "${input.stadt}"}
+    plan_with_input["tasks"][0]["payload"] = {"city": "${input.city}"}
     (tmp_path / "templates").mkdir()
     (tmp_path / "history").mkdir()
     (tmp_path / "templates" / "demo.json").write_text(json.dumps(plan_with_input))
@@ -159,16 +159,16 @@ def test_run_flow_input_templates_resolve(monkeypatch, tmp_path):
     _fake_clock(monkeypatch)
     result = _run_flow(
         api,
-        {"mode": "run_flow", "flow": "demo", "input": {"stadt": "Leipzig"}},
+        {"mode": "run_flow", "flow": "demo", "input": {"city": "Leipzig"}},
         monkeypatch, tmp_path,
     )
     assert result["status"] == "completed"
     first_submit_payload = captured[0].get("payload") or {}
-    assert first_submit_payload.get("city") == "Leipzig"  # ${input.stadt} aufgelöst
+    assert first_submit_payload.get("city") == "Leipzig"  # ${input.city} resolved
 
 
 def test_classic_run_still_records_history(monkeypatch, tmp_path):
-    """Klassischer Plan-Lauf (D9) schreibt bei Erfolg ebenfalls Historie."""
+    """A classic plan run (D9) also writes history on success."""
     import os
     (tmp_path / "history").mkdir()
     captured = []
@@ -190,7 +190,7 @@ def test_classic_run_still_records_history(monkeypatch, tmp_path):
     _patch_http(monkeypatch, handler)
     api = RelayApi(BASE, TOKEN)
     _fake_clock(monkeypatch)
-    result = _run_flow(api, {"task": "mach demo"}, monkeypatch, tmp_path)
+    result = _run_flow(api, {"task": "run demo"}, monkeypatch, tmp_path)
     assert result["status"] == "completed"
     records = [f for f in os.listdir(tmp_path / "history") if f.endswith(".json")]
     assert len(records) == 1

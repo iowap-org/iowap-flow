@@ -1,6 +1,6 @@
-# tests/test_flow_templates.py — T-002: Template-Interpolation (Dateninjektion
-# zwischen Flow-Tasks). Syntax ${ref.result.path}, Auflösung beim Submit aus dem
-# laufenden Aggregate — MockTransport-Muster wie test_flow_runner.py.
+# tests/test_flow_templates.py — T-002: template interpolation (data injection
+# between flow tasks). Syntax ${ref.result.path}, resolution at submit time from
+# the running aggregate — MockTransport pattern like test_flow_runner.py.
 import json
 
 import httpx
@@ -10,7 +10,7 @@ from flow_node.relay_api import RelayApi
 from flow_node.runner import FlowError, _resolve_templates, build_plan_prompt, run
 
 BASE = "http://relay.test"
-TOKEN = "/tmp/flow-test-token"  # existiert nicht → kein Authorization-Header
+TOKEN = "/tmp/flow-test-token"  # does not exist → no Authorization header
 ORIGIN_TASK = "task-origin-1"
 ORIGIN_STAGE = "stage-origin-1"
 NODE = "flow-runner-01"
@@ -23,12 +23,12 @@ VALID_CAPS = {
 
 
 # ---------------------------------------------------------------------------
-# Test-Transport: wie test_flow_runner.py — gefakte TaskView-Sequenzen
+# Test transport: like test_flow_runner.py — faked TaskView sequences
 # ---------------------------------------------------------------------------
 
 def _patch_http(monkeypatch, handler):
-    """httpx.request + httpx.get (Modul-Ebene) auf den Handler lenken —
-    RelayApi und runner rufen beide Varianten."""
+    """Redirect httpx.request + httpx.get (module level) to the handler —
+    RelayApi and runner call both variants."""
     def patched_request(method, url, **kwargs):
         req = httpx.Request(method, url, headers=kwargs.get("headers") or {},
                             content=kwargs.get("content"))
@@ -68,7 +68,7 @@ def _ok():
 
 
 def _fake_clock(monkeypatch):
-    """monotonic-Uhr, die mit time.sleep-Advances mitgeht (kein echtes Warten)."""
+    """monotonic clock that advances with time.sleep (no real waiting)."""
     state = {"elapsed": 0.0}
 
     def fake_sleep(seconds):
@@ -80,12 +80,12 @@ def _fake_clock(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# _resolve_templates — Unit (Syntax, Typ-Erhalt, Fail-fast D6)
+# _resolve_templates — unit (syntax, type preservation, fail-fast D6)
 # ---------------------------------------------------------------------------
 
 def test_exact_match_resolves_to_native_type():
-    """String, der EXAKT einem Template entspricht → nativer Wert, Typ bleibt
-    erhalten (str/int/bool/dict, auch mehrstufiger Dot-Path)."""
+    """A string matching EXACTLY one template → native value, type stays
+    preserved (str/int/bool/dict, also multi-level dot path)."""
     aggregate = {"img": {"artifact_id": "art-42", "count": 3,
                          "flag": True, "meta": {"w": 512}}}
     resolved = _resolve_templates(
@@ -99,64 +99,64 @@ def test_exact_match_resolves_to_native_type():
         aggregate,
     )
     assert resolved["artifact_id"] == "art-42"   # str
-    assert resolved["count"] == 3                # int bleibt int
-    assert resolved["flag"] is True              # bool bleibt bool
-    assert resolved["meta"] == {"w": 512}        # dict bleibt dict
-    assert resolved["width"] == 512              # Dot-Path über 2 Ebenen
+    assert resolved["count"] == 3                # int stays int
+    assert resolved["flag"] is True              # bool stays bool
+    assert resolved["meta"] == {"w": 512}        # dict stays dict
+    assert resolved["width"] == 512              # dot path across 2 levels
 
 
 def test_embedded_templates_substitute_as_str():
-    """Template EINGEBETTET in größeren String → alle Treffer als str() im
-    Text substituieren; dict/list via json.dumps, Skalare via str()."""
+    """Template EMBEDDED in a larger string → all matches substituted as str()
+    in the text; dict/list via json.dumps, scalars via str()."""
     aggregate = {"img": {"artifact_id": "art-42", "count": 3,
                          "meta": {"w": 512}, "tags": ["a", "b"]}}
     resolved = _resolve_templates(
         {
-            "text": "Bild ${img.result.artifact_id} gespeichert",
+            "text": "Image ${img.result.artifact_id} stored",
             "two": "${img.result.artifact_id}/${img.result.count}",
             "obj": "meta=${img.result.meta}",
             "lst": "tags=${img.result.tags}",
         },
         aggregate,
     )
-    assert resolved["text"] == "Bild art-42 gespeichert"
+    assert resolved["text"] == "Image art-42 stored"
     assert resolved["two"] == "art-42/3"        # int → str()
     assert resolved["obj"] == 'meta={"w": 512}'  # dict → json.dumps
     assert resolved["lst"] == 'tags=["a", "b"]'  # list → json.dumps
 
 
 def test_nested_payloads_dict_in_dict_and_lists():
-    """Rekursion über den Payload: dict in dict, Listen, gemischte Elemente."""
+    """Recursion over the payload: dict in dict, lists, mixed elements."""
     aggregate = {"img": {"artifact_id": "art-42", "url": "http://x/y.png"}}
     payload = {
         "outer": {"inner": "${img.result.artifact_id}",
                   "deeper": {"x": "${img.result.url}"}},
-        "liste": ["${img.result.artifact_id}",
-                  {"k": "prefix-${img.result.url}"}, 42],
-        "plain": "bleibt wie es ist",
+        "list": ["${img.result.artifact_id}",
+                 {"k": "prefix-${img.result.url}"}, 42],
+        "plain": "stays as is",
     }
     assert _resolve_templates(payload, aggregate) == {
         "outer": {"inner": "art-42", "deeper": {"x": "http://x/y.png"}},
-        "liste": ["art-42", {"k": "prefix-http://x/y.png"}, 42],
-        "plain": "bleibt wie es ist",
+        "list": ["art-42", {"k": "prefix-http://x/y.png"}, 42],
+        "plain": "stays as is",
     }
 
 
 def test_missing_ref_in_aggregate_raises_flowerror_with_depends_on_hint():
-    """Referenz auf Task, der im Aggregate fehlt (meist: fehlt in depends_on)
-    → FlowError mit Template, referenziertem Task und depends_on-Hinweis."""
+    """Reference to a task missing from the aggregate (usually: missing from depends_on)
+    → FlowError with template, referenced task and depends_on hint."""
     aggregate = {"img": {"artifact_id": "art-42"}}
     with pytest.raises(FlowError) as exc_info:
         _resolve_templates({"artifact_id": "${storage.result.path}"}, aggregate)
     msg = str(exc_info.value)
-    assert "${storage.result.path}" in msg   # das Template
-    assert "storage" in msg                  # der referenzierte Task
-    assert "depends_on" in msg               # der Hinweis
+    assert "${storage.result.path}" in msg   # the template
+    assert "storage" in msg                  # the referenced task
+    assert "depends_on" in msg               # the hint
 
 
 def test_unresolvable_path_raises_flowerror():
-    """Path nicht im Resultat auflösbar (fehlender Key oder trifft auf einen
-    Nicht-dict-Wert) → FlowError mit Template, Task und depends_on-Hinweis."""
+    """Path not resolvable in the result (missing key or hits a
+    non-dict value) → FlowError with template, task and depends_on hint."""
     aggregate = {"img": {"artifact_id": "art-42"}}
     for template in ("${img.result.does.not.exist}", "${img.result.artifact_id.sub}"):
         with pytest.raises(FlowError) as exc_info:
@@ -168,40 +168,40 @@ def test_unresolvable_path_raises_flowerror():
 
 
 def test_non_template_strings_pass_through():
-    """Nur ${ref.result.path} ist ein Template — alles andere bleibt literal
-    (keine Ausdrücke, keine Defaultwerte, keine Filter)."""
+    """Only ${ref.result.path} is a template — everything else stays literal
+    (no expressions, no default values, no filters)."""
     aggregate = {"img": {"artifact_id": "art-42"}}
     payload = {
         "a": "plain text",
-        "b": "{kein} template",
-        "c": "${img.artifact_id}",   # ohne .result. → kein Template
+        "b": "{no} template",
+        "c": "${img.artifact_id}",   # without .result. → no template
         "d": "$ref",
-        "e": "${img.result}",        # ohne Path → kein Template
+        "e": "${img.result}",        # without path → no template
         "f": 7,
     }
     assert _resolve_templates(payload, aggregate) == payload
 
 
 # ---------------------------------------------------------------------------
-# Plan-Prompt: Planner muss die Template-Syntax kennen (T-002 Plan D6)
+# plan prompt: the planner must know the template syntax (T-002 plan D6)
 # ---------------------------------------------------------------------------
 
 def test_plan_prompt_documents_template_syntax():
-    """build_plan_prompt lehrt den Planner die Template-Syntax UND die Regel:
-    jeder referenzierte Task MUSS in depends_on stehen."""
-    prompt = build_plan_prompt("Erstelle 2 Bilder", "- agent.ai (available: True)")
+    """build_plan_prompt teaches the planner the template syntax AND the rule:
+    every referenced task MUST be in depends_on."""
+    prompt = build_plan_prompt("Create 2 images", "- agent.ai (available: True)")
     assert "${ref.result.path}" in prompt
     assert "depends_on" in prompt
 
 
 # ---------------------------------------------------------------------------
-# run() — Integration über den MockTransport (Muster: test_flow_runner.py)
+# run() — integration via the MockTransport (pattern: test_flow_runner.py)
 # ---------------------------------------------------------------------------
 
 def test_image_storage_flow_resolves_template_at_submit(monkeypatch):
-    """2-Task-Flow image → storage: ${img.result.artifact_id} wird zur
-    SUBMIT-Zeit aus dem Aggregate aufgelöst (nackter Wert, nativer Typ),
-    eingebettete Treffer als str(); flow-Metadaten kommen last."""
+    """2-task flow image → storage: ${img.result.artifact_id} is resolved at
+    SUBMIT time from the aggregate (bare value, native type),
+    embedded matches as str(); flow metadata comes last."""
     _fake_clock(monkeypatch)
     submits = {}
 
@@ -210,7 +210,7 @@ def test_image_storage_flow_resolves_template_at_submit(monkeypatch):
         "name": "paper",
         "tasks": [
             {"id": "img", "capability": "image.generate.mflux",
-             "payload": {"prompt": "Zeitungsseite"}, "depends_on": []},
+             "payload": {"prompt": "newspaper page"}, "depends_on": []},
             {"id": "storage", "capability": "storage.store",
              "payload": {"artifact_id": "${img.result.artifact_id}",
                          "label": "art-${img.result.count}"},
@@ -240,14 +240,14 @@ def test_image_storage_flow_resolves_template_at_submit(monkeypatch):
 
     _patch_http(monkeypatch, handler)
     api = RelayApi(BASE, TOKEN)
-    result = run(api, {"task": "Zeitung als PDF"}, BASE, TOKEN,
+    result = run(api, {"task": "newspaper as PDF"}, BASE, TOKEN,
                  ORIGIN_TASK, ORIGIN_STAGE, NODE)
 
-    # Template zur Submit-Zeit aufgelöst — NICHT erst vom Storage-Handler
+    # template resolved at submit time — NOT only by the storage handler
     storage = submits["flow:paper:storage"]["payload"]
-    assert storage["artifact_id"] == "art-7f3"   # exakt → nativer Wert
-    assert storage["label"] == "art-2"           # eingebettet → str()
-    # flow-Metadaten kamen LAST — Template-Auflösung lief nie über sie
+    assert storage["artifact_id"] == "art-7f3"   # exact → native value
+    assert storage["label"] == "art-2"           # embedded → str()
+    # flow metadata came LAST — template resolution never went through it
     assert storage["flow"] == {"origin_task_id": ORIGIN_TASK, "task_ref": "storage"}
     assert result["status"] == "completed"
     assert result["result"]["aggregate"] == {
@@ -257,9 +257,9 @@ def test_image_storage_flow_resolves_template_at_submit(monkeypatch):
 
 
 def test_flow_fails_when_referenced_task_not_in_aggregate(monkeypatch):
-    """Task referenziert einen Task, der NICHT in depends_on steht → beim
-    Submit fehlt er im Aggregate → FlowError mit betroffenem task_ref,
-    Template und depends_on-Hinweis; der Task wird nie submittet (D6)."""
+    """A task references a task that is NOT in depends_on → at submit time it
+    is missing from the aggregate → FlowError with the affected task_ref,
+    template and depends_on hint; the task is never submitted (D6)."""
     _fake_clock(monkeypatch)
     submitted = []
 
@@ -271,7 +271,7 @@ def test_flow_fails_when_referenced_task_not_in_aggregate(monkeypatch):
              "payload": {}, "depends_on": []},
             {"id": "storage", "capability": "storage.store",
              "payload": {"artifact_id": "${img.result.artifact_id}"},
-             "depends_on": []},  # FEHLER: img fehlt in depends_on
+             "depends_on": []},  # BUG: img missing from depends_on
         ],
         "summary": "s",
     }
@@ -291,7 +291,7 @@ def test_flow_fails_when_referenced_task_not_in_aggregate(monkeypatch):
             if task_id == "flow:_plan":
                 return _task_view("flow:_plan", "completed",
                                   result={"result": json.dumps(plan)})
-            # Der Flow failt beim Storage-Submit VOR jedem Poll-Ergebnis
+            # the flow fails at the storage submit BEFORE any poll result
             return _task_view(task_id, "pending")
         return _ok()
 
@@ -301,7 +301,7 @@ def test_flow_fails_when_referenced_task_not_in_aggregate(monkeypatch):
         run(api, {"task": "t"}, BASE, TOKEN, ORIGIN_TASK, ORIGIN_STAGE, NODE)
 
     msg = str(exc_info.value)
-    assert "storage" in msg                       # betroffener task_ref
-    assert "${img.result.artifact_id}" in msg     # das Template
-    assert "depends_on" in msg                    # der Hinweis
-    assert submitted == ["flow:broken:img"]       # storage nie submittet (D6)
+    assert "storage" in msg                       # affected task_ref
+    assert "${img.result.artifact_id}" in msg     # the template
+    assert "depends_on" in msg                    # the hint
+    assert submitted == ["flow:broken:img"]       # storage never submitted (D6)

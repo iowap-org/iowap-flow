@@ -1,31 +1,31 @@
-"""agent_ai.py — Handler-Einstiegspunkt für Capability agent.ai (T-001c).
+"""agent_ai.py — handler entry point for capability agent.ai (T-001c).
 
-Läuft als Shell-Handler (iowap-node handler_runner-Kontrakt), z.B.
-  python3 /app/handlers/agent_ai.py  (bzw. mit dem Pfad des Deploy-Hosts).
-Braucht das flow_node-Package importierbar (PYTHONPATH=src oder installiert).
+Runs as a shell handler (iowap-node handler_runner contract), e.g.
+  python3 /app/handlers/agent_ai.py  (or the deploy host's path).
+Needs the flow_node package importable (PYTHONPATH=src or installed).
 
-Contract (handler_runner, identisch zum Live-Handler ~/.relay/handlers/
-hermes-handler.py, modulo die dokumentierten Abweichungen D6/D7 in
+Contract (handler_runner, identical to the live handler ~/.relay/handlers/
+hermes-handler.py, modulo the documented deviations D6/D7 in
 .hermes/pipeline/T-001c/design.md):
-  stdin : Stage-Payload als JSON-Objekt
+  stdin : stage payload as a JSON object
   env   : RELAY_BASE_URL, RELAY_TOKEN_FILE, RELAY_TASK_ID, RELAY_STAGE_ID,
-          RELAY_NODE_ID, RELAY_CAPABILITY  (handler_runner setzt immer)
-          HERMES_BIN (optional — override; Default: `hermes` via PATH, T-182)
-          HERMES_TIMEOUT (default 280 Sekunden)
-          AGENT_AI_KEEPALIVE_INTERVAL_SECONDS (optional float, Tests)
-  stdout: NUR das finale JSON-Result (Logging → stderr)
-          Erfolg:  {"status": "completed", "result": {"answer": ...,
+          RELAY_NODE_ID, RELAY_CAPABILITY  (handler_runner always sets it)
+          HERMES_BIN (optional — override; default: `hermes` via PATH, T-182)
+          HERMES_TIMEOUT (default 280 seconds)
+          AGENT_AI_KEEPALIVE_INTERVAL_SECONDS (optional float, tests)
+  stdout: ONLY the final JSON result (logging → stderr)
+          success:  {"status": "completed", "result": {"answer": ...,
                    "stage_id": ..., "task_id": ..., "capability": ...,
                    "elapsed_seconds": ...}, "debug": {...}}
-          Fehler:  {"status": "error", "error": ...}
-  exit  : 0 in beiden Fällen (D7 — der Daemon completed die Stage aus
-          dem stdout-JSON; der flow-Runner behandelt error-Results über
-          den D9-Retry).
+          error:   {"status": "error", "error": ...}
+  exit  : 0 in both cases (D7 — the daemon completes the stage from
+          the stdout JSON; the flow runner handles error results via
+          the D9 retry).
 
-T-001c (Fix a): direkt nach dem Claim eine kind=longrun-Note an den Task
-(T-154: claimed -> accepted + 2h-Lease), Keepalive-Notes während des
-Hermes-LLM-Calls (Kadenz KEEPALIVE_INTERVAL_SECONDS, per Env für Tests
-überschreibbar). Note-Fehler sind fail-soft (AC2): Planning läuft weiter.
+T-001c (fix a): directly after the claim a kind=longrun note to the task
+(T-154: claimed -> accepted + 2h lease), keepalive notes during the
+Hermes-LLM call (cadence KEEPALIVE_INTERVAL_SECONDS, overridable per env
+for tests). Note errors are fail-soft (AC2): planning keeps running.
 """
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ PROMPT_KEYS = ("task", "prompt", "question", "message", "input")  # D6 order
 
 
 def _log(msg: str) -> None:
-    """Logging auf stderr — stdout bleibt dem finalen JSON-Result vorbehalten."""
+    """Logging goes to stderr — stdout is reserved for the final JSON result."""
     print(msg, file=sys.stderr, flush=True)
 
 
@@ -62,8 +62,8 @@ def _resolve_hermes_bin() -> str | None:
 
 
 def extract_prompt(payload: dict) -> str:
-    """D6: erstes nicht-leeres Feld aus PROMPT_KEYS (task zuerst — der
-    flow-Runner submittet payload={"task": PLAN_PROMPT}), sonst
+    """D6: first non-empty field from PROMPT_KEYS (task first — the
+    flow runner submits payload={"task": PLAN_PROMPT}), otherwise
     json.dumps(payload). FROZEN order."""
     for key in PROMPT_KEYS:
         value = payload.get(key)
@@ -73,9 +73,9 @@ def extract_prompt(payload: dict) -> str:
 
 
 def main() -> int:
-    """Handler-Einstiegspunkt: stdin-Payload → longrun-Note am Claim
-    (T-001c) → Hermes-Subprocess mit Keepalive → Result-JSON auf stdout.
-    Liefert immer 0 (D7)."""
+    """Handler entry point: stdin payload → longrun note at claim
+    (T-001c) → Hermes subprocess with keepalive → result JSON on stdout.
+    Always returns 0 (D7)."""
     # -- 1. stdin payload (absent/invalid → {}, live mirror) --
     try:
         raw = sys.stdin.read()

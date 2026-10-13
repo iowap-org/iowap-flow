@@ -1,9 +1,9 @@
-"""Subprocess-Integrationstests für den agent.ai-Handler (T-001c, §2.2/§4).
+"""Subprocess integration tests for the agent.ai handler (T-001c, §2.2/§4).
 
-Pattern wie tests/test_flow_handler.py: HTTPServer-Fake-Relay (zeichnet notes
-auf) + tmp HERMES_BIN-Script + RELAY_*-Env; der Handler läuft als echter
-Subprocess mit PYTHONPATH=src. Design source:
-.hermes/pipeline/T-001c/design.md — Ausgabe-Shapes sind FROZEN (§2.3).
+Pattern like tests/test_flow_handler.py: HTTPServer fake relay (records
+notes) + tmp HERMES_BIN script + RELAY_* env; the handler runs as a real
+subprocess with PYTHONPATH=src. Design source:
+.hermes/pipeline/T-001c/design.md — output shapes are FROZEN (§2.3).
 """
 import json
 import os
@@ -24,7 +24,7 @@ NOTES: list[dict[str, str]] = []  # recorded note POSTs: path/task_id/message/ki
 
 
 class _FakeRelay(BaseHTTPRequestHandler):
-    """Zeichnet POST /notes auf (kind=longrun zählen), 200/500 steuerbar."""
+    """Records POST /notes (counts kind=longrun), 200/500 switchable."""
 
     fail_notes: bool = False
 
@@ -62,13 +62,13 @@ class _FakeRelay(BaseHTTPRequestHandler):
 
 
 class _FailingNotesRelay(_FakeRelay):
-    """500 auf jede Note — Fail-Soft-Pfad (AC2)."""
+    """500 on every note — the fail-soft path (AC2)."""
 
     fail_notes = True
 
 
 def _relay_env(tmp_path: Path, port: int) -> dict[str, str]:
-    """RELAY_*-Env für den Handler-Subprocess (handler_runner-Contract)."""
+    """RELAY_* env for the handler subprocess (handler_runner contract)."""
     token_file = tmp_path / "token"
     token_file.write_text("test-token")
     return {
@@ -82,7 +82,7 @@ def _relay_env(tmp_path: Path, port: int) -> dict[str, str]:
 
 
 def _hermes_script(tmp_path: Path, stdout_text: str, exit_code: int, sleep_s: float = 0.0) -> str:
-    """Tmp HERMES_BIN: schreibt stdout_text, schläft sleep_s, exit exit_code."""
+    """Tmp HERMES_BIN: writes stdout_text, sleeps sleep_s, exits exit_code."""
     out_file = tmp_path / "hermes_stdout.txt"
     out_file.write_text(stdout_text)
     stderr_line = 'echo "hermes exploded" >&2\n' if exit_code != 0 else ""
@@ -103,7 +103,7 @@ def _run_handler(
     env_extra: dict,
     hermes_bin: str,
 ) -> subprocess.CompletedProcess:
-    """Handler-Subprocess starten (PYTHONPATH=src, stdin-JSON rein)."""
+    """Start the handler subprocess (PYTHONPATH=src, stdin JSON in)."""
     env = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "HOME": os.environ.get("HOME", "/tmp"),
@@ -257,7 +257,7 @@ def test_extract_prompt_order() -> None:
 
 
 def test_default_hermes_bin_resolves_from_path(monkeypatch, tmp_path) -> None:
-    """T-182: ohne HERMES_BIN wird `hermes` via PATH aufgelöst, kein /home-Fallback."""
+    """T-182: without HERMES_BIN, `hermes` is resolved via PATH, no /home fallback."""
     sys.path.insert(0, str(REPO_ROOT / "handlers"))
     monkeypatch.delenv("HERMES_BIN", raising=False)
     monkeypatch.setenv("PATH", str(tmp_path))  # only tmp_path on PATH
@@ -274,7 +274,7 @@ def test_default_hermes_bin_resolves_from_path(monkeypatch, tmp_path) -> None:
 
 
 def test_default_hermes_bin_missing_env(monkeypatch, tmp_path) -> None:
-    """T-182: kein hermes auf PATH → None (Fail-fast-Kandidat, kein Home-Guess)."""
+    """T-182: no hermes on PATH → None (fail-fast candidate, no home guess)."""
     sys.path.insert(0, str(REPO_ROOT / "handlers"))
     monkeypatch.delenv("HERMES_BIN", raising=False)
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
@@ -288,8 +288,8 @@ def test_default_hermes_bin_missing_env(monkeypatch, tmp_path) -> None:
 
 
 def test_handler_missing_hermes_bin_fails_fast(tmp_path) -> None:
-    """T-182: HERMES_BIN unset + kein hermes auf PATH → status=error, sauberes
-    JSON (kein Crash, kein /home-Guess)."""
+    """T-182: HERMES_BIN unset + no hermes on PATH → status=error, clean
+    JSON (no crash, no /home guess)."""
     server = HTTPServer(("127.0.0.1", 0), _FakeRelay)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
@@ -297,7 +297,7 @@ def test_handler_missing_hermes_bin_fails_fast(tmp_path) -> None:
         env["PATH"] = str(tmp_path / "empty")
         (tmp_path / "empty").mkdir(exist_ok=True)
         env_no_hermes = {k: v for k, v in env.items()}
-        # _run_handler setzt HERMES_BIN immer — hier manuell ausführen
+        # _run_handler always sets HERMES_BIN — run manually here
         proc = subprocess.run(
             [sys.executable, str(HANDLER)],
             input=json.dumps({"task": "plan"}),
@@ -313,7 +313,7 @@ def test_handler_missing_hermes_bin_fails_fast(tmp_path) -> None:
             cwd=REPO_ROOT,
             check=False,
         )
-        assert proc.returncode == 0  # D7: exit 0 auch im Fehlerfall
+        assert proc.returncode == 0  # D7: exit 0 even on failure
         result = json.loads(proc.stdout)
         assert result["status"] == "error"
         assert "hermes" in result["error"].lower()
@@ -322,7 +322,7 @@ def test_handler_missing_hermes_bin_fails_fast(tmp_path) -> None:
 
 
 def test_module_contains_no_home_paths() -> None:
-    """T-182: das Modul führt keine Home-Verzeichnis-Pfade mehr als Literale."""
+    """T-182: the module carries no home-directory paths as literals anymore."""
     import agent_ai
 
     source = Path(agent_ai.__file__).read_text()

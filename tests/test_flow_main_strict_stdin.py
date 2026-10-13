@@ -28,7 +28,7 @@ def test_main_accepts_strict_envelope_stdin(monkeypatch, capsys):
     envelope = {
         "task_id": "task_test",
         "capability": "flow.run",
-        "input": {"original_request": "Erstelle ein Bild und beschreibe es"},
+        "input": {"original_request": "Create an image and describe it"},
     }
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(envelope)))
     monkeypatch.delenv("RELAY_BASE_URL", raising=False)

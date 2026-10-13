@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
-"""Handler-Einstiegspunkt für flow.run (T-172, Plan Task 5).
+"""Handler entry point for flow.run (T-172, plan task 5).
 
-stdin/stdout-Contract gemäß handler_runner (Plan §2.4, T-005d):
-  stdin:  Request Envelope (T-005b) als JSON-String —
+stdin/stdout contract per handler_runner (plan §2.4, T-005d):
+  stdin:  request envelope (T-005b) as a JSON string —
           {"task_id": ..., "capability": ..., "input": {...payload...}}
-          (ältere Daemons senden den Payload flat oder mirrored — run()
-          akzeptiert alle drei Generationen). payload = input enthält den
-          Dispatcher-Payload: "task" oder {"mode": "run_flow", "flow": ...}.
+          (older daemons send the payload flat or mirrored — run()
+          accepts all three generations). payload = input contains the
+          dispatcher payload: "task" or {"mode": "run_flow", "flow": ...}.
   env:    RELAY_BASE_URL, RELAY_TOKEN_FILE, RELAY_STAGE_ID, RELAY_TASK_ID,
-          RELAY_NODE_ID (geliefert von iowap-node handler_runner)
-  stdout: NUR das finale JSON-Result (kein Logging auf stdout!)
-          Erfolg:  {"status": "completed", "result": {"flow": {...},
-                   "aggregate": ..., "summary": ...}} (Response Envelope,
-                   T-005d; ohne "error"-Key — der Daemon zählt Failures via
-                   Key-Präsenz)
-  Fehler:  exit 1 + Grund auf stderr (flow.run failt die Stage mit exit 1 +
-          stderr-Grund, damit der Server-Retry-Pfad greift — Plan §2.4).
+          RELAY_NODE_ID (provided by iowap-node handler_runner)
+  stdout: ONLY the final JSON result (no logging on stdout!)
+          success:  {"status": "completed", "result": {"flow": {...},
+                   "aggregate": ..., "summary": ...}} (response envelope,
+                   T-005d; without an "error" key — the daemon counts
+                   failures via key presence)
+  error:   exit 1 + reason on stderr (flow.run fails the stage with exit 1 +
+          stderr reason so the server retry path applies — plan §2.4).
 
-Pipeline (Plan Task 5):
-  read stdin → run() [fetch_caps → submit Planungs-Kind → poll+extract →
+Pipeline (plan task 5):
+  read stdin → run() [fetch_caps → submit planning child → poll+extract →
   parse_plan → validate_capabilities_live → fan-out → join] → stdout JSON
 """
 from __future__ import annotations
@@ -33,21 +33,21 @@ from flow_node.runner import FlowError, _envelope_payload, run
 
 
 def _log(msg: str) -> None:
-    """Logging geht auf stderr — stdout bleibt dem finalen JSON-Result vorbehalten."""
+    """Logging goes to stderr — stdout is reserved for the final JSON result."""
     print(msg, file=sys.stderr, flush=True)
 
 
 def _fail(reason: str) -> SystemExit:
-    """Plan Task 5: exit 1 + stderr 'reason: <grund>' (Stage-Fail via exit != 0)."""
+    """Plan task 5: exit 1 + stderr 'reason: <reason>' (stage fail via exit != 0)."""
     _log(f"reason: {reason}")
     return SystemExit(1)
 
 
 def main() -> int:
-    """Handler-Einstiegspunkt: stdin-Payload → Flow ausführen → stdout JSON."""
+    """Handler entry point: stdin payload → run flow → stdout JSON."""
     # stdin: {"task": ..., "original_request": ..., "options": {...}} (§2.4)
-    # Der Server übergibt das Stage-Payload wörtlich; die Capability-Doku
-    # schreibt 'original_request' vor, ältere Clients senden 'task'.
+    # The server passes the stage payload verbatim; the capability docs
+    # prescribe 'original_request', older clients send 'task'.
     try:
         raw = sys.stdin.read()
         payload = json.loads(raw) if raw.strip() else {}
@@ -61,8 +61,8 @@ def main() -> int:
     # generation discriminator the runner applies in run() (design.md §6);
     # stripping here keeps run()'s own call idempotent.
     payload = _envelope_payload(payload)
-    # T-003: list_flows/save_flow brauchen kein 'task'; run_flow auch nicht
-    # (der Runner setzt task_text selbst). Klassischer Lauf bleibt Pflichtfeld.
+    # T-003: list_flows/save_flow don't need 'task'; run_flow doesn't either
+    # (the runner sets task_text itself). The classic run stays mandatory.
     mode = payload.get("mode")
     if mode not in ("list_flows", "run_flow", "save_flow") and not (
         payload.get("task") or payload.get("original_request")
@@ -102,16 +102,16 @@ def main() -> int:
             options=options,
         )
     except (PlanError, FlowError) as e:
-        # Plan Task 5: PlanError → stderr mit Grund, exit 1 (Server macht Stage failed)
-        # FlowError → exit 1 mit stderr "reason: plan phase failed: <grund>" bzw. Grund
+        # Plan task 5: PlanError → stderr with reason, exit 1 (server marks stage failed)
+        # FlowError → exit 1 with stderr "reason: plan phase failed: <reason>" resp. reason
         raise _fail(str(e)) from e
     except Exception as e:
-        # Letzte Verteidigung des stdout-only-Contracts: Relay-Ausfälle (httpx.ConnectError
-        # etc.) dürfen NICHT als Traceback auf stderr enden — der Server-Retry-Pfad parst
-        # "reason: <grund>". Traceback bleibt trotzdem im Exception-Chaining erhalten.
+        # Last line of defense for the stdout-only contract: relay outages (httpx.ConnectError
+        # etc.) must NOT end up as a traceback on stderr — the server retry path parses
+        # "reason: <reason>". The traceback is still preserved via exception chaining.
         raise _fail(f"handler failed: {type(e).__name__}: {e}") from e
 
-    # stdout NUR das finale JSON-Result (kein Logging auf stdout!)
+    # stdout ONLY the final JSON result (no logging on stdout!)
     json.dump(result, sys.stdout)
     sys.stdout.write("\n")
     sys.stdout.flush()

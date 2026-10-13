@@ -1,10 +1,10 @@
-# tests/test_flow_handler.py — Task 5 (Handler-Einstiegspunkt, subprocess-basierter Integrationstest: stdin-JSON rein, stdout-JSON raus)
-"""Subprocess-Integrationstests für den flow.run-Handler (Plan Task 5, §2.4).
+# tests/test_flow_handler.py — task 5 (handler entry point, subprocess-based integration test: stdin JSON in, stdout JSON out)
+"""Subprocess integration tests for the flow.run handler (plan task 5, §2.4).
 
-Der Handler läuft als `python -m flow_node` mit RELAY_*-Env; das Relay wird
-nicht gemockt (Subprocess!), stattdessen werden die Fehler-Pfade getestet,
-die ohne funktionierendes Relay garantiert eintreten, und der Happy-Path mit
-einem minimalen Fake-Relay (python http.server) für die Plan-Phase.
+The handler runs as `python -m flow_node` with RELAY_* env; the relay is
+not mocked (subprocess!) — instead the error paths are tested that are
+guaranteed to occur without a working relay, plus the happy path with
+a minimal fake relay (python http.server) for the plan phase.
 """
 import json
 import os
@@ -30,7 +30,7 @@ VALID_PLAN = {
 
 
 def _relay_env(tmp_path: Path, port: int) -> dict[str, str]:
-    """RELAY_*-Env für den Handler-Subprocess (handler_runner-Contract §2.4)."""
+    """RELAY_* env for the handler subprocess (handler_runner contract §2.4)."""
     token_file = tmp_path / "token"
     token_file.write_text("test-token")
     return {
@@ -46,11 +46,11 @@ def _run_handler(
     stdin_payload: dict,
     env_extra: dict,
 ) -> subprocess.CompletedProcess:
-    """Handler-Subprocess mit RELAY_*-Env + stdin-JSON starten (Plan §2.4)."""
+    """Start handler subprocess with RELAY_* env + stdin JSON (plan §2.4)."""
     env = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "HOME": os.environ.get("HOME", "/tmp"),
-        # src/-Layout: Package ohne Install importierbar machen
+        # src/-layout: make the package importable without install
         "PYTHONPATH": str(REPO_ROOT / "src"),
     }
     env.update(env_extra)
@@ -67,15 +67,15 @@ def _run_handler(
 
 
 class _FakeRelayHandler(BaseHTTPRequestHandler):
-    """Minimal-Fake-Relay: Discovery, task-simple-Submit, TaskView-Poll, Complete.
+    """Minimal fake relay: discovery, task-simple submit, TaskView poll, complete.
 
-    Happy-Path-Script: Planungs-Kind (agent.ai) → valides Plan-JSON →
-    Fan-out-Kind (tool.x) → completed → Ursprungs-Stage complete.
+    Happy-path script: planning child (agent.ai) → valid plan JSON →
+    fan-out child (tool.x) → completed → origin stage complete.
     """
 
     plan = VALID_PLAN
 
-    def log_message(self, *args):  # stdout-Noise im Test-Output unterdrücken
+    def log_message(self, *args):  # suppress stdout noise in the test output
         pass
 
     def _json_body(self) -> dict:
@@ -113,7 +113,7 @@ class _FakeRelayHandler(BaseHTTPRequestHandler):
 
 
 class _UnreachableRelayHandler(_FakeRelayHandler):
-    """Plan-Phase-Fail: agent.ai-Planungs-Kind → zweimal failed (D9-Retry ausgeschöpft)."""
+    """Plan phase fail: agent.ai planning child → failed twice (D9 retry exhausted)."""
 
     def do_GET(self) -> None:
         if self.path == "/relay/v2/discovery/capabilities":
@@ -125,14 +125,14 @@ class _UnreachableRelayHandler(_FakeRelayHandler):
 
 
 class _InvalidPlanRelayHandler(_FakeRelayHandler):
-    """PlanError-Pfad: agent.ai liefert zweimal ein strukturell ungültiges Plan-JSON."""
+    """PlanError path: agent.ai delivers structurally invalid plan JSON twice."""
 
     plan: ClassVar[dict] = {"version": 1, "name": "broken", "tasks": [], "summary": "s"}
 
 
 @pytest.fixture()
 def fake_relay():
-    """Startet das Fake-Relay in einem Thread; yieldet (port, server)."""
+    """Starts the fake relay in a thread; yields (port, server)."""
     server = HTTPServer(("127.0.0.1", 0), _FakeRelayHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -151,7 +151,7 @@ def test_handler_completes_happy_path(fake_relay, tmp_path):
     # stdin {"task": ..., "options": ...} → stdout {"status": "completed", ...}
     port, _ = fake_relay
     proc = _run_handler(
-        {"task": "Erstelle 3 Produktbilder und zippe sie", "options": {}},
+        {"task": "Create 3 product images and zip them", "options": {}},
         _relay_env(tmp_path, port),
     )
     assert proc.returncode == 0, f"stderr: {proc.stderr}"
@@ -163,14 +163,14 @@ def test_handler_completes_happy_path(fake_relay, tmp_path):
 
 
 def test_stdout_contains_only_final_result_json(fake_relay, tmp_path):
-    # stdout NUR das finale JSON-Result; kein Logging auf stdout (Plan Task 5, Pitfall 6)
+    # stdout ONLY the final JSON result; no logging on stdout (plan task 5, pitfall 6)
     port, _ = fake_relay
     proc = _run_handler(
         {"task": "demo", "options": {}},
         _relay_env(tmp_path, port),
     )
     assert proc.returncode == 0, f"stderr: {proc.stderr}"
-    # stdout ist exakt EINE JSON-Zeile + Trailing-Newline — parsebarer Block, nichts davor/danach
+    # stdout is exactly ONE JSON line + trailing newline — parseable block, nothing before/after
     assert proc.stdout.count("\n") == 1 and proc.stdout.endswith("\n")
     result = json.loads(proc.stdout)
     assert result["status"] == "completed"
@@ -179,8 +179,8 @@ def test_stdout_contains_only_final_result_json(fake_relay, tmp_path):
 
 
 def test_plan_phase_failure_exits_1_with_reason_on_stderr(tmp_path):
-    # kein Planungs-Result/kein valides JSON nach Retry → exit 1 + stderr
-    # "reason: plan phase failed: <grund>"
+    # no planning result/no valid JSON after retry → exit 1 + stderr
+    # "reason: plan phase failed: <reason>"
     server = _start_relay(_UnreachableRelayHandler)
     try:
         proc = _run_handler(
@@ -190,13 +190,13 @@ def test_plan_phase_failure_exits_1_with_reason_on_stderr(tmp_path):
     finally:
         server.shutdown()
     assert proc.returncode == 1
-    assert proc.stdout == ""  # kein halbes Result auf stdout
+    assert proc.stdout == ""  # no half result on stdout
     assert "reason: plan phase failed:" in proc.stderr
     assert "llm exploded" in proc.stderr
 
 
 def test_plan_error_exits_1_with_ground_on_stderr(tmp_path):
-    # PlanError → stderr mit Grund, exit 1 (Server macht Stage failed)
+    # PlanError → stderr with reason, exit 1 (server marks the stage failed)
     server = _start_relay(_InvalidPlanRelayHandler)
     try:
         proc = _run_handler(
@@ -208,4 +208,4 @@ def test_plan_error_exits_1_with_ground_on_stderr(tmp_path):
     assert proc.returncode == 1
     assert proc.stdout == ""
     assert "reason:" in proc.stderr
-    assert "no tasks" in proc.stderr  # PlanError-Grund aus parse_plan (§2.2)
+    assert "no tasks" in proc.stderr  # PlanError reason from parse_plan (§2.2)
