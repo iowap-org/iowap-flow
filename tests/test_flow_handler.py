@@ -175,7 +175,7 @@ def test_stdout_contains_only_final_result_json(fake_relay, tmp_path):
     result = json.loads(proc.stdout)
     assert result["status"] == "completed"
     assert set(result) == {"status", "result"}
-    assert set(result["result"]) == {"flow", "aggregate", "summary"}
+    assert set(result["result"]) == {"flow", "aggregate", "summary", "history_id"}
 
 
 def test_plan_phase_failure_exits_1_with_reason_on_stderr(tmp_path):

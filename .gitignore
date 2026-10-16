@@ -15,3 +15,7 @@ board
 # T-003: Laufzeit-Artefakte (Katalog ist templates/, Historie ist nicht dauerhaft)
 history/
 agent-runs/
+
+# test artifacts leaked into CWD (T-231 finding).
+history/
+templates/

@@ -19,7 +19,10 @@ import httpx
 from .catalog import (
     CatalogError,
     cleanup_history,
+    define_flow,
+    list_history_records,
     load_flow,
+    load_history_record,
     record_history,
     resolve_input_templates,
     save_flow_from_history,
@@ -493,6 +496,41 @@ def run(
                              "summary": f"flow {name!r} saved to catalog"}}
         api.complete_stage(origin_task_id, origin_stage_id, result)
         return result
+    if mode == "list_history":
+        records = list_history_records(payload.get("limit") or 20)
+        # T-005d: conforming Response Envelope — payload under "result",
+        # no "error" key (daemon counts failures by key presence).
+        result = {"status": "completed",
+                  "result": {"mode": "list_history", "records": records,
+                             "summary": f"{len(records)} history records"}}
+        api.complete_stage(origin_task_id, origin_stage_id, result)
+        return result
+    if mode == "show_history":
+        try:
+            record = load_history_record(str(payload.get("history_id") or ""))
+        except CatalogError as e:
+            msg = f"show_history failed: {e}"
+            api.fail_stage(origin_task_id, origin_stage_id, msg)
+            raise FlowError(msg) from None
+        result = {"status": "completed",
+                  "result": {"mode": "show_history", "record": record,
+                             "summary": f"history {record.get('history_id')!r}"}}
+        api.complete_stage(origin_task_id, origin_stage_id, result)
+        return result
+    if mode == "define_flow":
+        # T-231 F2: catalog definition straight from the payload —
+        # no history roundtrip needed.
+        try:
+            name = define_flow(str(payload.get("name") or ""), payload.get("plan"))
+        except CatalogError as e:
+            msg = f"define_flow failed: {e}"
+            api.fail_stage(origin_task_id, origin_stage_id, msg)
+            raise FlowError(msg) from None
+        result = {"status": "completed",
+                  "result": {"mode": "define_flow", "flow": name,
+                             "summary": f"flow {name!r} defined in catalog"}}
+        api.complete_stage(origin_task_id, origin_stage_id, result)
+        return result
 
     task_text = str(payload.get("task") or payload.get("original_request") or "")
     flow_input: dict[str, Any] | None = None
@@ -700,17 +738,11 @@ def run(
     # "error" in result (key presence) — a literal "error": null would
     # count every successful flow run as a failure. Same rationale as
     # T-005a deviation D4.
-    result = {
-        "status": "completed",
-        "result": {
-            "flow": {"name": plan.name, "tasks_done": total},
-            "aggregate": aggregate,
-            "summary": plan.summary,
-        },
-    }
-    api.complete_stage(origin_task_id, origin_stage_id, result)
-    # T-003: successful runs (classic AND run_flow) land in the history —
-    # fail-soft: a history failure never fails the completed flow.
+    # T-231 F3: record BEFORE complete — the history_id rides in the
+    # completed result (the consumer no longer scrapes a note string).
+    # Fail-soft stays: a history failure yields no history_id and never
+    # fails the completed flow (record errors are OSError-class).
+    history_id: str | None = None
     try:
         history_id = record_history(
             flow_name=plan.name,
@@ -730,4 +762,13 @@ def run(
         api.add_note(origin_task_id, f"flow recorded in history: {history_id}", kind="info")
     except OSError:
         pass
+    result_payload: dict[str, Any] = {
+        "flow": {"name": plan.name, "tasks_done": total},
+        "aggregate": aggregate,
+        "summary": plan.summary,
+    }
+    if history_id:
+        result_payload["history_id"] = history_id
+    result = {"status": "completed", "result": result_payload}
+    api.complete_stage(origin_task_id, origin_stage_id, result)
     return result

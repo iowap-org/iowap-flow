@@ -225,3 +225,49 @@ def _safe_name(raw: str) -> str:
     """Compact, filesystem-safe name component."""
     cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw.strip())
     return cleaned[:60] or "flow"
+
+def list_history_records(limit: int = 20) -> list[dict[str, Any]]:
+    """Slim history listing, newest first (T-231, F3).
+
+    Returns ``[{history_id, flow_name, origin_task_id, saved_at}]`` —
+    deliberately without the plan/aggregate blobs (``show_history`` loads
+    those). Fail-soft: broken files are skipped, never raised.
+    """
+    d = history_dir()
+    if not d.is_dir():
+        return []
+    records: list[dict[str, Any]] = []
+    for path in d.glob("*.json"):
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            records.append({
+                "history_id": raw["history_id"],
+                "flow_name": raw.get("flow_name"),
+                "origin_task_id": raw.get("origin_task_id"),
+                "saved_at": raw.get("saved_at"),
+            })
+        except (OSError, KeyError, ValueError):
+            continue
+    records.sort(key=lambda r: r.get("saved_at") or 0, reverse=True)
+    limit = max(1, min(int(limit), 100))
+    return records[:limit]
+
+
+def define_flow(name: str, plan: Any) -> str:
+    """Persist a flow definition straight into the catalog (T-231, F2).
+
+    No history roundtrip required — write a plan JSON directly. Returns
+    the normalized catalog name (``_safe_name``).
+    """
+    if not isinstance(plan, dict):
+        raise CatalogError(f"flow {name!r}: plan must be a single JSON object")
+    safe = _safe_name(str(name or ""))
+    if not safe:
+        raise CatalogError("flow definition requires a name")
+    d = catalog_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{safe}.json").write_text(
+        json.dumps(plan, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return safe
