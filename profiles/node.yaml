@@ -1,7 +1,7 @@
 # profiles/node.yaml — dedicated flow-runner node (T-172)
 
 node_name: flow-runner
-description: "Dumb Kanban — orchestrator node (flow.run)"
+description: "Dumb Kanban — orchestrator node (flow.run + flow.catalog)"
 status: online
 
 capabilities:
@@ -9,15 +9,10 @@ capabilities:
     type: workflow
     version: "1.0.0"
     claimable: true
-    long_run: true            # T-154: lease instead of the 300s claim timeout
-    max_parallel: 1           # D7: one Kanban per node
-    timeout: 14400            # 4h handler budget
-    description: "Accepts a planned flow and executes it as plain tasks. Input: original_request (verbatim task) — optional mode: run_flow (prebuilt catalog flow, skips agent.ai). Management (history/catalog) lives in the flow.catalog capability."
-        mode:
-          name: mode
-          type: string
-          required: false
-          description: "Optional execution mode: run (default, classic plan run via agent.ai) or run_flow (prebuilt catalog flow via 'flow' + 'input'). Management modes live on flow.catalog."
+    long_run: true           # T-154: lease instead of the 300s claim timeout
+    max_parallel: 1          # D7: one Kanban per node
+    timeout: 14400           # 4h handler budget
+    description: "Accepts a planned flow and executes it as plain tasks. Input: original_request (verbatim task); optional mode=run_flow (prebuilt catalog flow, skips agent.ai). Management (history/catalog) lives in flow.catalog."
     input_schema:
       fields:
         original_request:
@@ -25,12 +20,28 @@ capabilities:
           type: string
           required: true
           description: "The original task verbatim. Example: 'Create 3 product images and zip them'."
+        mode:
+          name: mode
+          type: string
+          required: false
+          description: "Optional execution mode: run (default, classic plan run via agent.ai) or run_flow (prebuilt catalog flow via 'flow' + 'input')."
+        flow:
+          name: flow
+          type: string
+          required: false
+          description: "Catalog flow name (run_flow only)."
+        input:
+          name: input
+          type: object
+          required: false
+          description: "Input parameters for the catalog flow (run_flow only, ${input.x} templates)."
         options:
           name: options
           type: object
           required: false
           description: "Optional: {max_flow_seconds: 14400}."
     handler: "python3 /app/handlers/flow_run.py"
+
   - name: flow.catalog
     type: workflow
     version: "1.0.0"
@@ -67,4 +78,3 @@ capabilities:
           required: false
           description: "Plan JSON for define_flow (version/name/summary/tasks)."
     handler: "python3 /app/handlers/flow_catalog.py"
-
