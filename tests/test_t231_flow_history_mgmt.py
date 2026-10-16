@@ -101,6 +101,19 @@ class TestCatalogHelpers:
         with pytest.raises(CatalogError, match="plan"):
             catalog_mod.define_flow("demo", ["not", "a", "dict"])
 
+    def test_define_flow_rejects_schrott_missing_tasks(self, tmp_path, monkeypatch):
+        """T-231c: Schrott ablehnen — same validation as run_flow, at upload."""
+        monkeypatch.setenv("FLOW_CATALOG_DIR", str(tmp_path / "templates"))
+        with pytest.raises(CatalogError, match="tasks"):
+            catalog_mod.define_flow("scrap", {"version": 1, "name": "scrap"})
+
+    def test_define_flow_rejects_unknown_dep(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FLOW_CATALOG_DIR", str(tmp_path / "templates"))
+        bad = {"version": 1, "name": "bad", "summary": "s",
+               "tasks": [{"id": "a", "capability": "chat.ai", "depends_on": ["ghost"]}]}
+        with pytest.raises(CatalogError, match="unknown depends_on"):
+            catalog_mod.define_flow("bad", bad)
+
 
 # ── runner modes ────────────────────────────────────────────────
 

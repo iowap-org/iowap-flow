@@ -17,6 +17,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .plan import PlanError, parse_plan
+
 # Cleanup rules (both, separate): max-age AND max-count.
 HISTORY_MAX_AGE_DAYS = 14
 HISTORY_MAX_COUNT = 50
@@ -258,9 +260,17 @@ def define_flow(name: str, plan: Any) -> str:
 
     No history roundtrip required — write a plan JSON directly. Returns
     the normalized catalog name (``_safe_name``).
+
+    T-231c (Schrott ablehnen): validated via the same ``parse_plan`` that
+    run_flow applies lazily — schema, refs, cycles, reachability. An
+    invalid plan never reaches the catalog.
     """
     if not isinstance(plan, dict):
         raise CatalogError(f"flow {name!r}: plan must be a single JSON object")
+    try:
+        parse_plan(plan)
+    except PlanError as e:
+        raise CatalogError(f"flow {name!r}: invalid plan: {e}") from None
     safe = _safe_name(str(name or ""))
     if not safe:
         raise CatalogError("flow definition requires a name")
