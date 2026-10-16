@@ -101,6 +101,29 @@ class TestCatalogHelpers:
         with pytest.raises(CatalogError, match="plan"):
             catalog_mod.define_flow("demo", ["not", "a", "dict"])
 
+    def test_define_flow_rejects_scrap_plan(self, tmp_path, monkeypatch):
+        """T-231c: define validates via parse_plan — no plan poisons the catalog."""
+        monkeypatch.setenv("FLOW_CATALOG_DIR", str(tmp_path / "templates"))
+        with pytest.raises(CatalogError, match="tasks"):
+            catalog_mod.define_flow("scrap1", {"version": 1, "name": "x", "summary": "s"})  # no tasks
+        with pytest.raises(CatalogError, match="version"):
+            catalog_mod.define_flow("scrap2", {"version": 2, "name": "x", "summary": "s", "tasks": [{"id": "a"}]})
+        with pytest.raises(CatalogError, match="duplicate"):
+            catalog_mod.define_flow("scrap3", {
+                "version": 1, "name": "x", "summary": "s",
+                "tasks": [{"id": "a", "capability": "c", "payload": {}}, {"id": "a", "capability": "c", "payload": {}}, {"id": "b", "capability": "c", "payload": {}, "depends_on": ["a"]}],
+            })
+        assert not (tmp_path / "templates" / "scrap1.json").exists()
+        assert not (tmp_path / "templates" / "scrap2.json").exists()
+
+    def test_define_flow_accepts_valid_plan(self, tmp_path, monkeypatch):
+        from tests.test_flow_modes import PLAN
+
+        monkeypatch.setenv("FLOW_CATALOG_DIR", str(tmp_path / "templates"))
+        name = catalog_mod.define_flow("real-flow", PLAN)
+        assert name == "real-flow"
+        assert catalog_mod.load_flow(name)["version"] == 1
+
     def test_define_flow_rejects_schrott_missing_tasks(self, tmp_path, monkeypatch):
         """T-231c: Schrott ablehnen — same validation as run_flow, at upload."""
         monkeypatch.setenv("FLOW_CATALOG_DIR", str(tmp_path / "templates"))
