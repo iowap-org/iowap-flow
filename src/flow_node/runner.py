@@ -422,9 +422,14 @@ def _envelope_payload(payload: dict) -> dict:
     return payload
 
 
-def run(
-    api: RelayApi,
+MANAGEMENT_MODES = frozenset({
+    "list_flows", "list_history", "show_history", "save_flow", "define_flow",
+})
+
+
+def manage(
     payload: dict,
+    api: RelayApi,
     base_url: str,
     token_file: str,
     origin_task_id: str,
@@ -432,45 +437,21 @@ def run(
     node_id: str,
     options: dict | None = None,
 ) -> dict:
-    """Runs the complete flow: plan phase → validation → fan-out → join → aggregate.
+    """T-231b: the flow.catalog surface — catalog/history management.
 
-    T-003 modes (payload['mode'], cleanly separated from the classic run):
-      - 'list_flows': catalog query (no plan child, no fan-out).
-      - 'run_flow':   prebuilt flow from the catalog — skips the plan
-        phase, ${input.path} parameters, otherwise identical fan-out/join.
-      - 'save_flow':  promotes a history entry permanently into the catalog.
-    Without 'mode' (default): classic run (plan phase via agent.ai, FROZEN).
-
-    Semantics (plan task 4, fail-fast D6):
-      0. Plan phase: note 'longrun' 'flow started' → discovery snapshot → PLAN_PROMPT →
-         planning child to agent.ai (idempotency_key flow-<origin>-_plan, name
-         flow:_plan) → note 'planning started' → poll until done → leniently
-         extract the result. Planning child failed or no valid plan JSON → D9:
-         1 retry with the validation error in the prompt, 2nd attempt fails → flow failed.
-      1. Validation: parse_plan + validate_capabilities_live against a FRESH snapshot
-         (race safety net).
-      2. Topologically: submit all tasks with satisfied deps simultaneously (real
-         parallel fan-out), idempotency_key flow-<origin-task-id>-<task-id>.
-      3. Template resolution ${ref.result.path} (T-002, data injection from the
-         running aggregate) + payload injection: 'flow': {origin_task_id,
-         task_ref} — only if the capability's input_schema allows it,
-         otherwise omit.
-      4. Poll loop 5s per child; keepalive note every 600s independent of the poll cadence:
-         'flow progress: done=K/N' (lease refresh on the origin task, T-154).
-      5. Child failed (permanent) → the whole flow fails: note 'flow failed at
-         <task-ref> (<capability>): <error>' → fail_stage() → FlowError.
-      6. All done → aggregate {task_ref: result} → complete_stage() with
-         {'status': 'completed', 'aggregate': ..., 'summary': plan.summary}.
-      7. After every fan-out state change: note kind=info on the origin task.
+    Same shape as run(), but no planning child, no fan-out. Handles ONLY
+    the modes in MANAGEMENT_MODES; anything else → FlowError (D6).
     """
-    options = options or {}
-    # T-005d: accept all three handler_runner generations (strict/mirrored/
-    # flat — see _envelope_payload); payload now carries the dispatcher's
-    # task payload uniformly.
     payload = _envelope_payload(payload)
     mode = payload.get("mode")
+    if mode not in MANAGEMENT_MODES:
+        msg = "manage payload missing/unknown 'mode' (one of: " + ", ".join(
+            sorted(MANAGEMENT_MODES)) + ")"
+        api.fail_stage(origin_task_id, origin_stage_id, msg)
+        raise FlowError(msg)
+    del node_id  # management needs no node identity beyond origin context
+    del options
 
-    # -- T-003: cleanly separated modes (no plan child, no fan-out) ------------
     if mode == "list_flows":
         caps = fetch_capabilities(base_url, token_file)
         entries = list_catalog_flows(caps)
@@ -532,6 +513,70 @@ def run(
         api.complete_stage(origin_task_id, origin_stage_id, result)
         return result
 
+
+
+def run(
+    api: RelayApi,
+    payload: dict,
+    base_url: str,
+    token_file: str,
+    origin_task_id: str,
+    origin_stage_id: str,
+    node_id: str,
+    options: dict | None = None,
+) -> dict:
+    """Runs the complete flow: plan phase → validation → fan-out → join → aggregate.
+
+    T-003 modes (payload['mode'], cleanly separated from the classic run):
+      - 'list_flows': catalog query (no plan child, no fan-out).
+      - 'run_flow':   prebuilt flow from the catalog — skips the plan
+        phase, ${input.path} parameters, otherwise identical fan-out/join.
+      - 'save_flow':  promotes a history entry permanently into the catalog.
+    Without 'mode' (default): classic run (plan phase via agent.ai, FROZEN).
+
+    Semantics (plan task 4, fail-fast D6):
+      0. Plan phase: note 'longrun' 'flow started' → discovery snapshot → PLAN_PROMPT →
+         planning child to agent.ai (idempotency_key flow-<origin>-_plan, name
+         flow:_plan) → note 'planning started' → poll until done → leniently
+         extract the result. Planning child failed or no valid plan JSON → D9:
+         1 retry with the validation error in the prompt, 2nd attempt fails → flow failed.
+      1. Validation: parse_plan + validate_capabilities_live against a FRESH snapshot
+         (race safety net).
+      2. Topologically: submit all tasks with satisfied deps simultaneously (real
+         parallel fan-out), idempotency_key flow-<origin-task-id>-<task-id>.
+      3. Template resolution ${ref.result.path} (T-002, data injection from the
+         running aggregate) + payload injection: 'flow': {origin_task_id,
+         task_ref} — only if the capability's input_schema allows it,
+         otherwise omit.
+      4. Poll loop 5s per child; keepalive note every 600s independent of the poll cadence:
+         'flow progress: done=K/N' (lease refresh on the origin task, T-154).
+      5. Child failed (permanent) → the whole flow fails: note 'flow failed at
+         <task-ref> (<capability>): <error>' → fail_stage() → FlowError.
+      6. All done → aggregate {task_ref: result} → complete_stage() with
+         {'status': 'completed', 'aggregate': ..., 'summary': plan.summary}.
+      7. After every fan-out state change: note kind=info on the origin task.
+    """
+    options = options or {}
+    # T-005d: accept all three handler_runner generations (strict/mirrored/
+    # flat — see _envelope_payload); payload now carries the dispatcher's
+    # task payload uniformly.
+    payload = _envelope_payload(payload)
+    mode = payload.get("mode")
+
+    # T-231b: management modes moved to manage() — still reachable over
+    # flow.run payloads (backwards-compatible T-003 modes), and exposed
+    # natively via the flow.catalog capability.
+    if mode in MANAGEMENT_MODES:
+        return manage(
+            payload=payload,
+            api=api,
+            base_url=base_url,
+            token_file=token_file,
+            origin_task_id=origin_task_id,
+            origin_stage_id=origin_stage_id,
+            node_id=node_id,
+            options=options,
+        )
     task_text = str(payload.get("task") or payload.get("original_request") or "")
     flow_input: dict[str, Any] | None = None
     if mode == "run_flow":

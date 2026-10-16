@@ -12,7 +12,12 @@ capabilities:
     long_run: true            # T-154: lease instead of the 300s claim timeout
     max_parallel: 1           # D7: one Kanban per node
     timeout: 14400            # 4h handler budget
-    description: "Accepts a planned flow and executes it as plain tasks. Input: original_request (verbatim task)."
+    description: "Accepts a planned flow and executes it as plain tasks. Input: original_request (verbatim task) — optional mode: run_flow (prebuilt catalog flow, skips agent.ai). Management (history/catalog) lives in the flow.catalog capability."
+        mode:
+          name: mode
+          type: string
+          required: false
+          description: "Optional execution mode: run (default, classic plan run via agent.ai) or run_flow (prebuilt catalog flow via 'flow' + 'input'). Management modes live on flow.catalog."
     input_schema:
       fields:
         original_request:
@@ -26,3 +31,40 @@ capabilities:
           required: false
           description: "Optional: {max_flow_seconds: 14400}."
     handler: "python3 /app/handlers/flow_run.py"
+  - name: flow.catalog
+    type: workflow
+    version: "1.0.0"
+    claimable: true
+    long_run: false
+    max_parallel: 2
+    timeout: 300
+    description: "Flow catalog/history management (T-231b): list_flows, list_history, show_history, save_flow, define_flow — payload['mode'] selects the operation."
+    input_schema:
+      fields:
+        mode:
+          name: mode
+          type: string
+          required: true
+          description: "One of: list_flows | list_history | show_history | save_flow | define_flow."
+        history_id:
+          name: history_id
+          type: string
+          required: false
+          description: "History record id (show_history/save_flow)."
+        limit:
+          name: limit
+          type: integer
+          required: false
+          description: "Max records for list_history (default 20, cap 100)."
+        name:
+          name: name
+          type: string
+          required: false
+          description: "Catalog name for define_flow."
+        plan:
+          name: plan
+          type: object
+          required: false
+          description: "Plan JSON for define_flow (version/name/summary/tasks)."
+    handler: "python3 /app/handlers/flow_catalog.py"
+

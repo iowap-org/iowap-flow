@@ -61,10 +61,14 @@ def main() -> int:
     # generation discriminator the runner applies in run() (design.md §6);
     # stripping here keeps run()'s own call idempotent.
     payload = _envelope_payload(payload)
-    # T-003: list_flows/save_flow don't need 'task'; run_flow doesn't either
-    # (the runner sets task_text itself). The classic run stays mandatory.
+    # T-003: management modes (T-231b list) and run_flow don't need 'task';
+    # the classic run stays mandatory. The mode set is runner-owned so the
+    # gate stays in sync (list_history/define_flow etc. would otherwise be
+    # rejected here with "missing 'task'").
+    from flow_node.runner import MANAGEMENT_MODES
+
     mode = payload.get("mode")
-    if mode not in ("list_flows", "run_flow", "save_flow") and not (
+    if mode not in MANAGEMENT_MODES and not (
         payload.get("task") or payload.get("original_request")
     ):
         raise _fail("flow payload missing 'task' (original request)")
