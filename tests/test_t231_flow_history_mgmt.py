@@ -26,7 +26,7 @@ import pytest
 from flow_node import catalog as catalog_mod
 from flow_node.catalog import CatalogError
 from flow_node.relay_api import RelayApi
-from flow_node.runner import run
+from flow_node.runner import PLAN_CAPABILITY, PLAN_FORWARD_SLOT, FlowError, run
 from tests.test_flow_modes import _run_flow
 from tests.test_flow_runner import (
     BASE,
@@ -192,7 +192,7 @@ class TestRunnerModes:
         from unittest.mock import MagicMock
 
         api = MagicMock()
-        with pytest.raises(Exception):
+        with pytest.raises(FlowError):
             _run_flow(api, {"mode": "show_history", "history_id": "nope-xyz-1"},
                       monkeypatch, tmp_path)
 
@@ -212,7 +212,8 @@ def test_successful_classic_run_result_carries_history_id(monkeypatch, tmp_path)
             return _caps_response(VALID_CAPS)
         if url == "/relay/v2/scheduler/task-simple" and request.method == "POST":
             body = json.loads(request.content)
-            if body["capability"] == "agent.ai":
+            if body["capability"] == PLAN_CAPABILITY:
+                assert body["payload"]["forward_slot"] == PLAN_FORWARD_SLOT
                 return _submit_response("plan-child-1")
             return _submit_response(f"child-{body['name']}")
         if url.startswith("/relay/v2/scheduler/tasks/"):

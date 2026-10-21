@@ -36,7 +36,8 @@ from .relay_api import RelayApi
 
 # ---- Frozen constants (plan task 4/4b + §2.4/§2.5) --------------------------
 
-PLAN_CAPABILITY = "agent.ai"          # planning child runs on agent.ai (task 4, step 0)
+PLAN_CAPABILITY = "forward"          # pseudo-capability: submitter's forward slot resolves to the planner capability
+PLAN_FORWARD_SLOT = "plan"           # forward slot for the planning child (needs LLM/decision)
 PLAN_TASK_REF = "_plan"               # idempotency_key: flow-<origin>-_plan
 IDEMPOTENCY_PREFIX = "flow"           # idempotency_key: flow-<origin-task-id>-<task-id> (§2.5)
 TASK_NAME_PREFIX = "flow:"            # task_name: flow:<flow-name>:<task-id> (§2.5)
@@ -657,7 +658,7 @@ def run(
                 )
             resp = api.submit_simple_task(
                 capability=PLAN_CAPABILITY,
-                payload={"task": prompt},
+                payload={"task": prompt, "forward_slot": PLAN_FORWARD_SLOT},
                 # The D9 retry needs a NEW idempotency key per attempt: with a
                 # constant key the server returns the same, already fully
                 # failed planning child and the feedback retry would be dead

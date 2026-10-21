@@ -18,10 +18,12 @@ from __future__ import annotations
 from flow_node.__main__ import main
 
 # Frozen constants (plan §2.4/§3 task 4/5) — the source of truth is
-# flow_node.runner (PLAN_CAPABILITY) resp. __main__ (ORIGIN_PAYLOAD_KEY = "task");
-# mirrored here only as documentation of the profile contract.
-PLAN_CAPABILITY = "agent.ai"      # planning child (idempotency_key flow-<origin>-_plan)
-ORIGIN_PAYLOAD_KEY = "task"       # stdin payload key for the verbatim task
+# flow_node.runner (PLAN_CAPABILITY + PLAN_FORWARD_SLOT) resp. __main__
+# (ORIGIN_PAYLOAD_KEY = "task"); mirrored here only as documentation of
+# the profile contract.
+PLAN_CAPABILITY = "forward"          # pseudo-capability (server-side resolve)
+PLAN_FORWARD_SLOT = "plan"           # forward slot carrying the planner decision
+ORIGIN_PAYLOAD_KEY = "task"          # stdin payload key for the verbatim task
 
 if __name__ == "__main__":
     raise SystemExit(main())

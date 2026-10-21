@@ -8,6 +8,8 @@ import pytest
 from flow_node.relay_api import RelayApi
 from flow_node.runner import (
     KEEPALIVE_INTERVAL_SECONDS,
+    PLAN_CAPABILITY,
+    PLAN_FORWARD_SLOT,
     PLAN_TASK_REF,
     POLL_INTERVAL_SECONDS,
     build_plan_prompt,
@@ -155,7 +157,8 @@ def test_planning_child_submitted_first_and_plan_extracted_lenient(monkeypatch):
             return _caps_response(VALID_CAPS)
         if url == "/relay/v2/scheduler/task-simple" and request.method == "POST":
             body = json.loads(request.content)
-            if body["capability"] == "agent.ai":
+            if body["capability"] == PLAN_CAPABILITY:
+                assert body["payload"]["forward_slot"] == PLAN_FORWARD_SLOT
                 assert body["idempotency_key"] == f"flow-{ORIGIN_TASK}-{PLAN_TASK_REF}"
                 assert body["name"] == "flow:_plan"
                 assert "Create 3 product images" in body["payload"]["task"]

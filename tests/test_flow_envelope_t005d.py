@@ -32,7 +32,7 @@ import httpx
 import pytest
 
 from flow_node.relay_api import RelayApi
-from flow_node.runner import run
+from flow_node.runner import PLAN_CAPABILITY, PLAN_FORWARD_SLOT, run
 
 BASE = "http://relay.test"
 TOKEN = "/tmp/flow-test-token"  # does not exist → no Authorization header
@@ -134,7 +134,8 @@ def test_stdin_strict_envelope_payload_read_from_input(monkeypatch, tmp_path):
         if url == "/relay/v2/scheduler/task-simple" and request.method == "POST":
             body = json.loads(request.content)
             seen.append(body)
-            if body["capability"] == "agent.ai":
+            if body["capability"] == PLAN_CAPABILITY:
+                assert body["payload"]["forward_slot"] == PLAN_FORWARD_SLOT
                 return _submit_response("flow:_plan")
             return _submit_response(body["name"])
         if url.startswith("/relay/v2/scheduler/tasks/"):
@@ -159,7 +160,8 @@ def test_stdin_strict_envelope_payload_read_from_input(monkeypatch, tmp_path):
 
     # The submitted plan child carries the task text from the inner payload.
     plan_body = seen[0]
-    assert plan_body["capability"] == "agent.ai"
+    assert plan_body["capability"] == PLAN_CAPABILITY
+    assert plan_body["payload"]["forward_slot"] == PLAN_FORWARD_SLOT
     assert "E2E" in plan_body["payload"]["task"]
     assert result["status"] == "completed"
     assert result["result"]["aggregate"] == {"a": {"out": "flow:demo:a"}}
@@ -178,7 +180,8 @@ def test_stdin_mirrored_envelope_inner_payload_preferred(monkeypatch, tmp_path):
         if url == "/relay/v2/scheduler/task-simple" and request.method == "POST":
             body = json.loads(request.content)
             seen.append(body)
-            if body["capability"] == "agent.ai":
+            if body["capability"] == PLAN_CAPABILITY:
+                assert body["payload"]["forward_slot"] == PLAN_FORWARD_SLOT
                 return _submit_response("flow:_plan")
             return _submit_response(body["name"])
         if url.startswith("/relay/v2/scheduler/tasks/"):
@@ -225,7 +228,8 @@ def test_stdin_flat_payload_still_works(monkeypatch, tmp_path):
         if url == "/relay/v2/scheduler/task-simple" and request.method == "POST":
             body = json.loads(request.content)
             seen.append(body)
-            if body["capability"] == "agent.ai":
+            if body["capability"] == PLAN_CAPABILITY:
+                assert body["payload"]["forward_slot"] == PLAN_FORWARD_SLOT
                 return _submit_response("flow:_plan")
             return _submit_response(body["name"])
         if url.startswith("/relay/v2/scheduler/tasks/"):
@@ -271,7 +275,8 @@ def test_classic_run_result_is_conforming_envelope(monkeypatch, tmp_path):
             return _caps_response(VALID_CAPS)
         if url == "/relay/v2/scheduler/task-simple" and request.method == "POST":
             body = json.loads(request.content)
-            if body["capability"] == "agent.ai":
+            if body["capability"] == PLAN_CAPABILITY:
+                assert body["payload"]["forward_slot"] == PLAN_FORWARD_SLOT
                 return _submit_response("flow:_plan")
             return _submit_response(body["name"])
         if url.startswith("/relay/v2/scheduler/tasks/"):
@@ -364,7 +369,8 @@ def test_mode_dispatch_inside_envelope_input(monkeypatch, tmp_path):
         if url == "/relay/v2/scheduler/task-simple" and request.method == "POST":
             body = json.loads(request.content)
             submits.append(body)
-            if body["capability"] == "agent.ai":
+            if body["capability"] == PLAN_CAPABILITY:
+                assert body["payload"]["forward_slot"] == PLAN_FORWARD_SLOT
                 return _submit_response("flow:_plan")
             return _submit_response(body["name"])
         if url.startswith("/relay/v2/scheduler/tasks/"):
