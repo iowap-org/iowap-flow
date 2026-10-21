@@ -4,6 +4,13 @@ node_name: flow-runner
 description: "Dumb Kanban — orchestrator node (flow.run + flow.catalog)"
 status: online
 
+# Forward slots (T-Forward-2): the flow node declares its dependency on the
+# planner capability so the admin can map it centrally (slot -> target).
+forward_slots:
+  "plan":
+    label: "Planner"
+    description: "Planner dependency for flow planning (LLM/decision model)."
+
 capabilities:
   - name: flow.run
     type: workflow
