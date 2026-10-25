@@ -42,6 +42,15 @@ from flow_node.relay_api import RelayApi
 DEFAULT_HERMES_BIN = "hermes"  # T-182: PATH lookup — no hardcoded home path
 DEFAULT_HERMES_TIMEOUT = 280  # live mirror (D8)
 PROMPT_KEYS = ("task", "prompt", "question", "message", "input")  # D6 order
+# T-235: the plan-split prompt channel — NOT part of the D6 PROMPT_KEYS
+# order (the D6 order stays verbatim, design §10.3). A payload that speaks
+# the split protocol is handled by extract_plan_prompt below.
+SPLIT_PROMPT_KEYS = ("systemprompt", "taskprompt")
+# T-235: join separator for the split channel — mirrors the server binding
+# default (iowap-server/core/forward.py:44, DEFAULT_BINDING_SEPARATOR "\n\n"),
+# so a future bound mapping (Option B) reproduces byte-identically what the
+# unbound handler join produces.
+PROMPT_SPLIT_JOIN_MARKER = "\n\n"
 
 
 def _log(msg: str) -> None:
@@ -65,11 +74,35 @@ def extract_prompt(payload: dict) -> str:
     """D6: first non-empty field from PROMPT_KEYS (task first — the
     flow runner submits payload={"task": PLAN_PROMPT}), otherwise
     json.dumps(payload). FROZEN order."""
+    split_prompt = extract_plan_prompt(payload)
+    if split_prompt is not None:
+        return split_prompt
     for key in PROMPT_KEYS:
         value = payload.get(key)
         if value:
             return value
     return json.dumps(payload)
+
+
+def extract_plan_prompt(payload: dict) -> str | None:
+    """T-235 split-channel recognition (NOT part of the D6 PROMPT_KEYS order).
+
+    Returns the prompt string when payload speaks the T-235 split protocol:
+      - both `systemprompt` and `taskprompt` present and truthy →
+        joined: systemprompt + PROMPT_SPLIT_JOIN_MARKER + taskprompt
+      - exactly one present and truthy → that field's value
+      - otherwise (neither present, or the side field empty) → None
+    A non-None return REPLACES the D6 walk in extract_prompt (split channel
+    wins over PROMPT_KEYS — design §9.8); None falls through to the untouched
+    D6 walk. Pure; no exceptions.
+    """
+    system = payload.get("systemprompt")
+    task = payload.get("taskprompt")
+    if system and task:
+        return system + PROMPT_SPLIT_JOIN_MARKER + task
+    if system or task:
+        return system if system else task
+    return None
 
 
 def main() -> int:

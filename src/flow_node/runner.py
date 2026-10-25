@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import time
 from typing import Any
@@ -84,6 +85,102 @@ des Capability-Resultats — pro Capability als 'result paths' im
 Capabilities-Snapshot gelistet. Jeder referenzierte Task MUSS in
 depends_on stehen, sonst failt der Flow beim Submit.
 """
+
+# ---- T-235: plan-prompt split (systemprompt / taskprompt) -------------------
+# The split halves are composed from PLAN_PROMPT's text verbatim (blocks move,
+# no sentence is reworded — board T-235 quality contract). Join convention:
+# systemprompt first, exactly one blank line between the halves (the handler
+# PROMPT_SPLIT_JOIN_MARKER, agent_ai.py) and between blocks inside each half.
+# CAREFUL: exactly ONE blank line ("\n\n" between blocks); neither constant
+# carries a leading or trailing newline. The substitution mechanics stays
+# .replace() (no str.format — the schema line contains LITERAL JSON braces;
+# runner.py §0.3 of design.md).
+PLAN_SYSTEM_PROMPT = (
+    "Du bist der Planner eines IOWAP-Task-Clusters. Erstelle einen Ausführungsplan\n"
+    "für folgende Aufgabe. Antworte NUR mit dem Plan-JSON (Schema siehe unten),\n"
+    "kein weiterer Text.\n"
+    "\n"
+    "Plan-Schema:\n"
+    "{\"version\": 1, \"name\": \"...\", \"tasks\": [{\"id\": \"...\", \"capability\": \"...\",\n"
+    "  \"payload\": {...}, \"depends_on\": [...]}], \"summary\": \"...\"}\n"
+    "Regeln: ids eindeutig; depends_on nur auf existierende ids; keine Zyklen;\n"
+    "Payload-Felder exakt wie im input_schema der Capability; halte die Zahl der\n"
+    "Tasks minimal.\n"
+    "\n"
+    "Datenweitergabe: Payload-Werte dürfen Ergebnisse früherer Tasks über\n"
+    "${ref.result.path} referenzieren (ref = Task-id, path = Dot-Path ins\n"
+    "Resultat des referenzierten Tasks). Die path-Segmente sind die Feldnamen\n"
+    "des Capability-Resultats — pro Capability als 'result paths' im\n"
+    "Capabilities-Snapshot gelistet. Jeder referenzierte Task MUSS in\n"
+    "depends_on stehen, sonst failt der Flow beim Submit."
+)
+
+PLAN_TASK_PROMPT_TEMPLATE = (
+    "Aufgabe:\n"
+    "{task}\n"
+    "\n"
+    "Verfügbare Capabilities (Live-Snapshot, von flow.run beim Planungs-Submit\n"
+    "eingebettet — plane ausschließlich mit diesen):\n"
+    "{capabilities_snapshot}"
+)
+
+# T-235 §1.3: the D9 retry feedback — extracted from the legacy inline block
+# (runner.py:655-658) so legacy and split cannot byte-drift apart. Appended
+# with .replace("{feedback}", feedback) — no str.format (house doctrine).
+PLAN_RETRY_FEEDBACK = (
+    "\n\nThe last plan attempt was invalid. Error:\n"
+    "{feedback}\n"
+    "Fix this error and answer again ONLY with the plan JSON."
+)
+
+# T-235 §2.2: the split mode is env-gated (deploy kill-switch, design §9.9).
+# Default OFF — the 1-string legacy form stays the code default so the
+# existing suite (env-unset) keeps its frozen 1-string payload assertions.
+PLAN_PROMPT_SPLIT_ENV = "FLOW_PLAN_PROMPT_SPLIT"
+_SPLIT_ENV_TRUE = frozenset({"1", "true", "yes", "on"})
+_SPLIT_ENV_FALSE = frozenset({"0", "false", "no", "off", ""})
+
+
+def plan_prompt_split_enabled() -> bool:
+    """T-235 §2.2: read FLOW_PLAN_PROMPT_SPLIT (frozen parse).
+
+    unset/empty → False (legacy 1-string default). strip().lower() in
+    ("1","true","yes","on") → True; in ("0","false","no","off","") → False;
+    anything else → FlowError naming the env and the raw value (loud — never
+    a silent fallback). Read per call (cheap; testable via monkeypatch).
+    """
+    raw = os.environ.get(PLAN_PROMPT_SPLIT_ENV, "")
+    value = raw.strip().lower()
+    if value in _SPLIT_ENV_TRUE:
+        return True
+    if value in _SPLIT_ENV_FALSE:
+        return False
+    raise FlowError(f"invalid {PLAN_PROMPT_SPLIT_ENV} value: {raw!r}")
+
+
+def build_plan_prompt_parts(
+    task: str,
+    capabilities_snapshot: str,
+    feedback: str | None = None,
+) -> tuple[str, str]:
+    """T-235 §1.5: build the split (systemprompt, taskprompt) pair.
+
+    system = PLAN_SYSTEM_PROMPT verbatim (static — no substitution).
+    task = PLAN_TASK_PROMPT_TEMPLATE.replace("{task}", task)
+          .replace("{capabilities_snapshot}", capabilities_snapshot)
+          + (PLAN_RETRY_FEEDBACK.replace("{feedback}", feedback)
+             if feedback else "")
+    .replace() instead of str.format(): the same literal-brace rule as
+    build_plan_prompt (design §1.2). Pure; no exceptions.
+    """
+    system = PLAN_SYSTEM_PROMPT
+    taskpart = (
+        PLAN_TASK_PROMPT_TEMPLATE.replace("{task}", task)
+        .replace("{capabilities_snapshot}", capabilities_snapshot)
+    )
+    if feedback:
+        taskpart += PLAN_RETRY_FEEDBACK.replace("{feedback}", feedback)
+    return system, taskpart
 
 
 class FlowError(RuntimeError):
@@ -650,15 +747,25 @@ def run(
         api.add_note(origin_task_id, f"flow started from catalog: {plan.name}", kind="longrun")
     else:
         for attempt in (1, 2):  # D9: 1 retry with the validation error in the prompt
-            prompt = build_plan_prompt(task_text, _caps_snapshot(caps))
-            if feedback:
-                prompt += (
-                    "\n\nThe last plan attempt was invalid. Error:\n"
-                    f"{feedback}\nFix this error and answer again ONLY with the plan JSON."
+            if plan_prompt_split_enabled():
+                system_prompt, task_prompt = build_plan_prompt_parts(
+                    task_text, _caps_snapshot(caps), feedback
                 )
+                # T-235 C2: the split submit — EXACTLY these three keys, no
+                # "task" key (the key set is a frozen contract, design §2.1).
+                submit_payload = {
+                    "systemprompt": system_prompt,
+                    "taskprompt": task_prompt,
+                    "forward_slot": PLAN_FORWARD_SLOT,
+                }
+            else:
+                prompt = build_plan_prompt(task_text, _caps_snapshot(caps))
+                if feedback:
+                    prompt += PLAN_RETRY_FEEDBACK.replace("{feedback}", feedback)
+                submit_payload = {"task": prompt, "forward_slot": PLAN_FORWARD_SLOT}
             resp = api.submit_simple_task(
                 capability=PLAN_CAPABILITY,
-                payload={"task": prompt, "forward_slot": PLAN_FORWARD_SLOT},
+                payload=submit_payload,
                 # The D9 retry needs a NEW idempotency key per attempt: with a
                 # constant key the server returns the same, already fully
                 # failed planning child and the feedback retry would be dead

@@ -328,3 +328,84 @@ def test_module_contains_no_home_paths() -> None:
     source = Path(agent_ai.__file__).read_text()
     assert "/home/" not in source
     assert "/Users/" not in source
+
+
+# ---------------------------------------------------------------------------
+# T-235: the plan-split prompt channel (systemprompt/taskprompt)
+# ---------------------------------------------------------------------------
+
+def _hermes_prompt_recorder_script(tmp_path: Path, stdout_text: str, exit_code: int = 0) -> tuple[str, str]:
+    """Tmp HERMES_BIN that records its prompt argument ($2 — the string after
+    -z) into a file so the test can assert what the handler sent. Returns
+    (script_path, prompt_file_path)."""
+    prompt_file = tmp_path / "hermes_prompt.txt"
+    out_file = tmp_path / "hermes_stdout.txt"
+    out_file.write_text(stdout_text)
+    script = tmp_path / "hermes_prompt_recorder.sh"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'printf \'%s\' "$2" > "{prompt_file}"\n'
+        f'cat "{out_file}"\n'
+        f"exit {exit_code}\n"
+    )
+    script.chmod(0o755)
+    return str(script), str(prompt_file)
+
+
+def test_extract_prompt_split_join() -> None:
+    """T-235: both split fields non-empty → joined system-first (§10.2)."""
+    sys.path.insert(0, str(REPO_ROOT / "handlers"))
+    try:
+        import agent_ai
+        # Arrange / Act / Assert
+        assert agent_ai.extract_prompt({"systemprompt": "S", "taskprompt": "P"}) == "S\n\nP"
+    finally:
+        sys.path.pop(0)
+
+
+def test_extract_prompt_split_single_side() -> None:
+    """Exactly one split field present → that field; the empty side falls
+    through (§10.2)."""
+    sys.path.insert(0, str(REPO_ROOT / "handlers"))
+    try:
+        import agent_ai
+        assert agent_ai.extract_prompt({"taskprompt": "P"}) == "P"
+        assert agent_ai.extract_prompt({"systemprompt": "S"}) == "S"
+        assert agent_ai.extract_prompt({"systemprompt": "", "taskprompt": "P"}) == "P"
+        assert agent_ai.extract_prompt({"systemprompt": "S", "taskprompt": ""}) == "S"
+    finally:
+        sys.path.pop(0)
+
+
+def test_extract_prompt_split_precedence_over_task() -> None:
+    """The split channel wins over PROMPT_KEYS in the mixed payload; the D6
+    walk alone keeps ranking 'task' first (§9.8, §10.3)."""
+    sys.path.insert(0, str(REPO_ROOT / "handlers"))
+    try:
+        import agent_ai
+        assert agent_ai.extract_prompt({"task": "T", "systemprompt": "S", "taskprompt": "P"}) == "S\n\nP"
+        assert agent_ai.extract_prompt({"task": "T"}) == "T"
+    finally:
+        sys.path.pop(0)
+
+
+def test_hermes_receives_joined_prompt(tmp_path) -> None:
+    """The handler passes the JOINED prompt (system-first) to `hermes -z` —
+    the json.dumps fallback never fires for split payloads (§3.1)."""
+    NOTES.clear()
+    server = HTTPServer(("127.0.0.1", 0), _FakeRelay)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        hermes, prompt_file = _hermes_prompt_recorder_script(tmp_path, "planned", 0)
+        proc = _run_handler(
+            {"systemprompt": "S", "taskprompt": "P"},
+            _relay_env(tmp_path, server.server_address[1]),
+            hermes,
+        )
+        assert proc.returncode == 0, f"stderr: {proc.stderr}"
+        result = json.loads(proc.stdout)
+        assert result["status"] == "completed"
+        assert result["result"]["answer"] == "planned"
+        assert Path(prompt_file).read_text() == "S\n\nP"
+    finally:
+        server.shutdown()
