@@ -1,7 +1,7 @@
 # iowap-flow
 
 **Flow Runner** for the IOWAP relay cluster - an orchestrator node with the
-capability `flow.run`, implementing a *dumb Kanban*: it takes an origin task,
+capability `flow.run`: a plan-and-execute orchestrator — it takes an origin task,
 orchestrates planning via the `forward` pseudo-capability
 (slot `plan` → planner capability, server-resolved), validates the plan
 against live capability discovery, fans every plan step out as an ordinary

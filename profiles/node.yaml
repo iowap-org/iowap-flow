@@ -1,7 +1,7 @@
 # profiles/node.yaml — dedicated flow-runner node (T-172)
 
 node_name: flow-runner
-description: "Dumb Kanban — orchestrator node (flow.run + flow.catalog)"
+description: "Plan-and-execute orchestrator (flow.run + flow.catalog; planner resolved via the plan slot)"
 status: online
 
 # Forward slots (T-Forward-2): the flow node declares its dependency on the
@@ -17,7 +17,7 @@ capabilities:
     version: "1.0.0"
     claimable: true
     long_run: true           # T-154: lease instead of the 300s claim timeout
-    max_parallel: 1          # D7: one Kanban per node
+    max_parallel: 1          # D7: one flow per node (serial plan execution)
     timeout: 14400           # 4h handler budget
     description: "Accepts a planned flow and executes it as plain tasks. Input: original_request (verbatim task); optional mode=run_flow (prebuilt catalog flow, skips agent.ai). Management (history/catalog) lives in flow.catalog."
     input_schema:

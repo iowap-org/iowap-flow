@@ -1,7 +1,7 @@
 [project]
 name = "iowap-flow"
 version = "0.1.0"
-description = "IOWAP Flow Runner - plan/fan-out/join orchestrator node (dumb Kanban) for the IOWAP relay cluster"
+description = "IOWAP Simple Flow Runner - plan/fan-out/join orchestrator (planner resolved via the plan slot) for the IOWAP relay cluster"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
