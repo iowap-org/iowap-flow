@@ -4,12 +4,34 @@ node_name: flow-runner
 description: "Plan-and-execute orchestrator (flow.run + flow.catalog; planner resolved via the plan slot)"
 status: online
 
-# Forward slots (T-Forward-2): the flow node declares its dependency on the
-# planner capability so the admin can map it centrally (slot -> target).
+# Forward slots (T-Forward-2, T-235, T-252): the flow node declares its
+# dependency on the planner capability so the admin can map it centrally
+# (slot -> target) — and the prompt channels as DECLARED payload fields
+# (the binding editor's chip universe; T-252 const rules drive think/model).
 forward_slots:
   "plan":
     label: "Planner"
     description: "Planner dependency for flow planning (LLM/decision model)."
+    input_schema:
+      fields:
+        systemprompt:
+          name: systemprompt
+          type: string
+          required: false
+          description: "Fester Rollen-/Format-Vertrag des Planers (PLAN_SYSTEM_PROMPT)."
+        taskprompt:
+          name: taskprompt
+          type: string
+          required: false
+          description: "Der Task-Text + capabilities-Snapshot + Feedback."
+  # T-253 optional: value slots as admin defaults — injected into every
+  # forward submit where the runner does not send the field itself
+  # (payload wins). Leave value unset to declare the field without a
+  # default (chip display only).
+  # "think":
+  #   type: bool
+  #   label: "Think mode"
+  #   value: false
 
 capabilities:
   - name: flow.run
