@@ -193,8 +193,10 @@ def test_flag_parse_matrix(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_split_submit_payload_shape(monkeypatch):
-    """C2: split-mode payload = EXACTLY {systemprompt, taskprompt,
-    forward_slot} — no task key; idempotency/name as frozen (§2.1)."""
+    """T-254: split-mode payload = EXACTLY {instruction, task, capabilities,
+    forward_slot} — the specialist is not an agent, so the capability list
+    ships as its own array field; systemprompt/taskprompt are gone.
+    Idempotency/name as frozen (§2.1)."""
     # Arrange
     monkeypatch.setenv(PLAN_PROMPT_SPLIT_ENV, "1")
     calls = []
@@ -228,23 +230,28 @@ def test_split_submit_payload_shape(monkeypatch):
     assert result["status"] == "completed"
     assert len(submits) == 3  # _plan + fan-out a, b
     assert submits[0]["capability"] == PLAN_CAPABILITY
-    assert set(submits[0]["payload"]) == {"systemprompt", "taskprompt", "forward_slot"}
-    assert "task" not in submits[0]["payload"]
+    assert set(submits[0]["payload"]) == {
+        "instruction", "task", "capabilities", "forward_slot"}
+    assert "systemprompt" not in submits[0]["payload"]
+    assert "taskprompt" not in submits[0]["payload"]
     assert submits[0]["payload"]["forward_slot"] == PLAN_FORWARD_SLOT
     assert submits[0]["idempotency_key"] == f"flow-{ORIGIN_TASK}-{PLAN_TASK_REF}"
     assert submits[0]["name"] == "flow:_plan"
-    assert PLAN_SYSTEM_PROMPT == submits[0]["payload"]["systemprompt"]
-    assert TASK_TEXT in submits[0]["payload"]["taskprompt"]
-    # the taskprompt ends with the caps snapshot lines — the SAME
-    # helper-derived string, not a literal (design T5)
+    assert PLAN_SYSTEM_PROMPT == submits[0]["payload"]["instruction"]
+    assert TASK_TEXT in submits[0]["payload"]["task"]
+    # caps text (task field) AND the structued array field ship BOTH:
     caps_text = _caps_snapshot(VALID_CAPS)
-    assert caps_text in submits[0]["payload"]["taskprompt"]
-    assert submits[0]["payload"]["taskprompt"].endswith(caps_text)
+    assert caps_text in submits[0]["payload"]["task"]
+    caps_arr = submits[0]["payload"]["capabilities"]
+    assert isinstance(caps_arr, list) and caps_arr, "live list as array field"
+    assert {e["name"] for e in caps_arr} == set(VALID_CAPS)
+    assert all(set(e) == {"name", "description", "input_schema", "available"}
+               for e in caps_arr)
 
 
 def test_split_submit_d9_feedback_in_taskprompt(monkeypatch):
-    """D9 under the split: attempt-2 taskprompt carries the feedback; the
-    systemprompt is byte-identical across attempts; no task key (§2.1)."""
+    """D9 under the split (T-254 form): attempt-2 task carries the feedback;
+    instruction is byte-identical across attempts; capabilities ship both."""
     # Arrange
     _fake_clock(monkeypatch)
     monkeypatch.setenv(PLAN_PROMPT_SPLIT_ENV, "1")
@@ -279,12 +286,14 @@ def test_split_submit_d9_feedback_in_taskprompt(monkeypatch):
     assert submits[1]["idempotency_key"] == f"flow-{ORIGIN_TASK}-{PLAN_TASK_REF}-2"
     assert submits[0]["name"] == "flow:_plan"
     assert submits[1]["name"] == "flow:_plan-2"
-    # the retry taskprompt carries the validation feedback; the systemprompt
+    # the retry task carries the validation feedback; the instruction
     # is byte-identical across attempts
-    assert "invalid" in submits[1]["payload"]["taskprompt"]
-    assert "no plan JSON object" in submits[1]["payload"]["taskprompt"]
-    assert submits[1]["payload"]["systemprompt"] == submits[0]["payload"]["systemprompt"] == PLAN_SYSTEM_PROMPT
-    assert "task" not in submits[1]["payload"]
+    assert "invalid" in submits[1]["payload"]["task"]
+    assert "no plan JSON object" in submits[1]["payload"]["task"]
+    assert submits[1]["payload"]["instruction"] == submits[0]["payload"]["instruction"] == PLAN_SYSTEM_PROMPT
+    assert "systemprompt" not in submits[1]["payload"]
+    assert "taskprompt" not in submits[1]["payload"]
+    assert isinstance(submits[1]["payload"]["capabilities"], list)
 
 
 def test_default_is_legacy_1string(monkeypatch):
