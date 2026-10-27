@@ -158,6 +158,37 @@ def plan_prompt_split_enabled() -> bool:
     raise FlowError(f"invalid {PLAN_PROMPT_SPLIT_ENV} value: {raw!r}")
 
 
+def _caps_array(caps: dict[str, dict]) -> list[dict]:
+    """T-254 (Ronny 2026-10-27): the capability list as an ARRAY field of
+    the plan submit — the specialist (qwen one-shot, NO tool use) cannot
+    fetch the live capability list itself; the flow runner MUST ship it.
+    Form matches the model.specialist ``capabilities`` contract verbatim:
+    array of objects {name, description, input_schema} (rendered into the
+    user message by the NovaForge handler). ``result_path_hints`` ride as
+    the extra key the T-005c contract needs for the data-passing pattern
+    ${ref.result.path}; the handler renders unknown keys alongside the
+    table, extra keys never break the schema check (name-only D-06).
+
+    Pure; no exceptions. Sorted by name (deterministic payloads).
+    """
+    entries: list[dict] = []
+    for name in sorted(caps):
+        cap = caps.get(name) or {}
+        desc = str(cap.get("description") or "")
+        hints = cap.get("result_path_hints")
+        if isinstance(hints, list) and hints:
+            desc = (desc + f" result paths: {', '.join(str(h) for h in hints)}").strip()
+        entry: dict[str, Any] = {
+            "name": name,
+            "description": desc,
+            "input_schema": cap.get("input_schema"),
+        }
+        if cap.get("available") is not None:
+            entry["available"] = bool(cap.get("available"))
+        entries.append(entry)
+    return entries
+
+
 def build_plan_prompt_parts(
     task: str,
     capabilities_snapshot: str,
@@ -748,14 +779,24 @@ def run(
     else:
         for attempt in (1, 2):  # D9: 1 retry with the validation error in the prompt
             if plan_prompt_split_enabled():
-                system_prompt, task_prompt = build_plan_prompt_parts(
+                instr, taskpart = build_plan_prompt_parts(
                     task_text, _caps_snapshot(caps), feedback
                 )
-                # T-235 C2: the split submit — EXACTLY these three keys, no
-                # "task" key (the key set is a frozen contract, design §2.1).
+                # T-254 (Ronny 2026-10-27): the specialist is NOT an agent —
+                # no tool use, no access to the live capability list — so the
+                # flow runner ships the list itself, as a SEPARATE array field
+                # (model.specialist capabilities contract: name/description/
+                # input_schema). The plan system prompt rides as "instruction"
+                # (verbatim, incl. the inline schema block — frozen text);
+                # "task" carries the original request + caps text + retry
+                # feedback; the workflow JSON-schema for Ollama structured
+                # outputs is added SERVER-SIDE as a const binding rule (the
+                # schema lives where the wiring lives — Ronny's variable
+                # routing form, not hardcoded in the runner).
                 submit_payload = {
-                    "systemprompt": system_prompt,
-                    "taskprompt": task_prompt,
+                    "instruction": instr,
+                    "task": taskpart,
+                    "capabilities": _caps_array(caps),
                     "forward_slot": PLAN_FORWARD_SLOT,
                 }
             else:
