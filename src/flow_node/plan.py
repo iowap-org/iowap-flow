@@ -4,6 +4,7 @@ Frozen contract: §2.2 (plan JSON) in .hermes/plans/flow-run-mvp.md.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -60,6 +61,20 @@ def parse_plan(raw: dict[str, Any]) -> Plan:
         if not isinstance(cap, str) or not cap:
             raise PlanError(f"plan.task {t['id']!r}: missing capability")
         payload = t.get("payload") or {}
+        # T-254-live (2026-10-27): qwen stringifyt den payload gelegentlich als
+        # JSON-ESCAPE-String ('{"prompt": …}') — tolerate ONE unwrap when the
+        # string parses as a JSON object (defence-in-depth; the const-schema
+        # structured-output enforcement makes the object case the norm, but
+        # the model drifts — loud PlanError only when the string is NOT JSON).
+        if isinstance(payload, str):
+            try:
+                candidate = json.loads(payload)
+                if isinstance(candidate, dict):
+                    payload = candidate
+                else:
+                    raise PlanError(f"plan.task {t['id']!r}: payload must be an object")
+            except json.JSONDecodeError:
+                raise PlanError(f"plan.task {t['id']!r}: payload must be an object") from None
         if not isinstance(payload, dict):
             raise PlanError(f"plan.task {t['id']!r}: payload must be an object")
         deps = t.get("depends_on") or []
