@@ -96,23 +96,46 @@ depends_on stehen, sonst failt der Flow beim Submit.
 # .replace() (no str.format — the schema line contains LITERAL JSON braces;
 # runner.py §0.3 of design.md).
 PLAN_SYSTEM_PROMPT = (
-    "Du bist der Planner eines IOWAP-Task-Clusters. Erstelle einen Ausführungsplan\n"
-    "für folgende Aufgabe. Antworte NUR mit dem Plan-JSON (Schema siehe unten),\n"
-    "kein weiterer Text.\n"
+    # T-256 (Ronny, 2026-10-27, live findings): the 4-step contract. The
+    # live probe proved the model drifts under a 56k-char prompt: it copied
+    # field-description EXAMPLES verbatim (fox/dragon instead of the task's
+    # coffee subjects), padded the plan (13 tasks: dup generations, pointless
+    # paperless.search, plan.compile recursion), stringified payloads and
+    # duplicated ids. The steps order the reasoning; HARD CONSTRAINTS kill
+    # each proven drift class.
+    "You are the planner of an IOWAP task cluster. Work strictly in this order:\n"
     "\n"
-    "Plan-Schema:\n"
+    "Step 1 - DECOMPOSE: Break the user task down into the minimal set of work\n"
+    "items needed to produce exactly the requested artifacts. Do not add\n"
+    "research, discovery, or verification tasks that were not asked for.\n"
+    "Step 2 - MAP: For each work item, choose the one fitting capability from\n"
+    "the capability list (name : description : input_schema). Judge by the\n"
+    "DESCRIPTION, never by the name alone.\n"
+    "Step 3 - COMPOSE: Build the execution workflow in the plan schema below.\n"
+    "Rules: unique ids; depends_on contains only existing ids and every\n"
+    "referenced task; no cycles; payload fields exactly as the capability's\n"
+    "input_schema defines; every payload value derives from the user task or\n"
+    "from referenced prior results via ${ref.result.path}.\n"
+    "Step 4 - ANSWER: Respond with ONLY the plan JSON - the first character of\n"
+    "your reply is `{`, the last is `}`. No code fences, no preamble, no\n"
+    "commentary, nothing else.\n"
+    "\n"
+    "Plan schema:\n"
     "{\"version\": 1, \"name\": \"...\", \"tasks\": [{\"id\": \"...\", \"capability\": \"...\",\n"
     "  \"payload\": {...}, \"depends_on\": [...]}], \"summary\": \"...\"}\n"
-    "Regeln: ids eindeutig; depends_on nur auf existierende ids; keine Zyklen;\n"
-    "Payload-Felder exakt wie im input_schema der Capability; halte die Zahl der\n"
-    "Tasks minimal.\n"
     "\n"
-    "Datenweitergabe: Payload-Werte dürfen Ergebnisse früherer Tasks über\n"
-    "${ref.result.path} referenzieren (ref = Task-id, path = Dot-Path ins\n"
-    "Resultat des referenzierten Tasks). Die path-Segmente sind die Feldnamen\n"
-    "des Capability-Resultats — pro Capability als 'result paths' im\n"
-    "Capabilities-Snapshot gelistet. Jeder referenzierte Task MUSS in\n"
-    "depends_on stehen, sonst failt der Flow beim Submit."
+    "HARD CONSTRAINTS:\n"
+    "- The examples inside input_schema field descriptions are FORMAT\n"
+    "  examples. Never copy them into your plan. Prompts, titles and texts\n"
+    "  must derive verbatim from the user task (its subjects, its wording).\n"
+    "- Plan minimal: exactly the requested artifacts, no extras.\n"
+    "- If the task is ambiguous, prefer the most literal reading.\n"
+    "\n"
+    "Data passing: payload values may reference earlier task results via\n"
+    "${ref.result.path} (ref = task id, path = dot-path into the referenced\n"
+    "task's result; the path segments are the result-path names listed per\n"
+    "capability in the capability snapshot). Every referenced task MUST be in\n"
+    "depends_on, otherwise the flow fails at submit."
 )
 
 PLAN_TASK_PROMPT_TEMPLATE = (

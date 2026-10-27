@@ -112,12 +112,20 @@ def _fake_clock(monkeypatch, step=POLL_INTERVAL_SECONDS):
 # ---------------------------------------------------------------------------
 
 def test_split_templates_are_frozen():
-    """The split constants exist with the frozen byte form (design §1.1)."""
+    """T-256: the split constants with the sharpened 4-step contract form."""
     # Arrange/Assert: static text checks (nothing to set up)
-    assert "Du bist der Planner eines IOWAP-Task-Clusters." in PLAN_SYSTEM_PROMPT
-    assert "Antworte NUR mit dem Plan-JSON" in PLAN_SYSTEM_PROMPT
+    assert "You are the planner of an IOWAP task cluster." in PLAN_SYSTEM_PROMPT
+    assert "Step 1 - DECOMPOSE" in PLAN_SYSTEM_PROMPT
+    assert "Step 2 - MAP" in PLAN_SYSTEM_PROMPT and "Judge by the\nDESCRIPTION" in PLAN_SYSTEM_PROMPT
+    assert "Step 3 - COMPOSE" in PLAN_SYSTEM_PROMPT
+    assert "Step 4 - ANSWER" in PLAN_SYSTEM_PROMPT
+    # T-254-live drift guards (verbatim evidence: fox/dragon prompt-copy case)
+    assert "Never copy them into your plan" in PLAN_SYSTEM_PROMPT
+    assert "must derive verbatim from the user task" in PLAN_SYSTEM_PROMPT
+    assert "Plan minimal: exactly the requested artifacts, no extras." in PLAN_SYSTEM_PROMPT
+    assert "the first character of\nyour reply is `{`" in PLAN_SYSTEM_PROMPT
     assert '{"version": 1, "name": "...", "tasks": [' in PLAN_SYSTEM_PROMPT
-    assert "Datenweitergabe:" in PLAN_SYSTEM_PROMPT
+    assert "Data passing:" in PLAN_SYSTEM_PROMPT
     assert "{task}" not in PLAN_SYSTEM_PROMPT
     assert "{capabilities_snapshot}" not in PLAN_SYSTEM_PROMPT
     assert PLAN_TASK_PROMPT_TEMPLATE.startswith("Aufgabe:\n{task}\n")
