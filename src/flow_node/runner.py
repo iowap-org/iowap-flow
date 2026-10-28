@@ -181,6 +181,57 @@ def plan_prompt_split_enabled() -> bool:
     raise FlowError(f"invalid {PLAN_PROMPT_SPLIT_ENV} value: {raw!r}")
 
 
+def _caps_compact(caps: dict[str, dict]) -> list[dict]:
+    """T-256-live (Ronny 2026-10-28): FULL list, COMPACT entries — every
+    capability rides, but each as a compact JSON object: name + usable
+    phrase (first description sentences, result-paths appended) +
+    result_paths + fields (name/type/required only).
+
+    Why: the live probe proved the 71-entry full-schema form (~56k chars)
+    drowns the task — the E2E plan invented pseudo-references
+    ("storage.list.path") and dropped images/poems entirely, while the
+    same model planned perfectly (A2/A3/A4, 100% task-faithful) from
+    compact 3-6 entry lists. Field DESCRIPTIONS are the hallucination
+    source (the model copied "A red fox…" example strings verbatim), so
+    they are dropped here; type+required carry the contract.
+
+    Pure; no exceptions. Sorted by name (deterministic payloads).
+    """
+    entries: list[dict] = []
+    for name in sorted(caps):
+        cap = caps.get(name) or {}
+        desc = str(cap.get("description") or "")
+        # usable: first ~2 sentences, result-paths appended when hinted
+        parts = desc.replace("! ", ".").replace("? ", ".").split(". ")
+        usable = ". ".join(p.strip() for p in parts if p.strip())[:220].strip()
+        hints = cap.get("result_path_hints")
+        if isinstance(hints, list) and hints:
+            usable = (usable + f" result paths: {', '.join(str(h) for h in hints)}").strip()
+        entry: dict[str, Any] = {"name": name, "usable": usable or "-"}
+        if isinstance(hints, list) and hints:
+            entry["result_paths"] = [str(h) for h in hints][:5]
+        schema = cap.get("input_schema") or {}
+        fields = schema.get("fields", schema) if isinstance(schema, dict) else {}
+        compact: dict[str, Any] = {}
+        if isinstance(fields, dict):
+            for k, v in fields.items():
+                if not isinstance(v, dict):
+                    continue
+                finfo: dict[str, Any] = {}
+                if v.get("type"):
+                    finfo["type"] = v.get("type")
+                if v.get("required"):
+                    finfo["required"] = True
+                if compact or fields:
+                    compact[k] = finfo
+        if compact:
+            entry["fields"] = compact
+        if cap.get("available") is False:
+            entry["available"] = False
+        entries.append(entry)
+    return entries
+
+
 def _caps_array(caps: dict[str, dict]) -> list[dict]:
     """T-254 (Ronny 2026-10-27): the capability list as an ARRAY field of
     the plan submit — the specialist (qwen one-shot, NO tool use) cannot
@@ -819,7 +870,12 @@ def run(
                 submit_payload = {
                     "instruction": instr,
                     "task": taskpart,
-                    "capabilities": _caps_array(caps),
+                    # T-256-live: FULL list, COMPACT entries — A2/A3/A4 proved
+                    # the compact form plans perfectly while the 56k
+                    # full-schema form drowns the task (pseudo-references,
+                    # dropped artifacts). _caps_array stays for
+                    # model_specialist's raw-form fallback paths.
+                    "capabilities": _caps_compact(caps),
                     "forward_slot": PLAN_FORWARD_SLOT,
                 }
             else:

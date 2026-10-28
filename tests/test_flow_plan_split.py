@@ -19,6 +19,7 @@ from flow_node.runner import (
     POLL_INTERVAL_SECONDS,
     FlowError,
     _caps_snapshot,
+    _caps_compact,
     build_plan_prompt_parts,
     plan_prompt_split_enabled,
     run,
@@ -253,8 +254,22 @@ def test_split_submit_payload_shape(monkeypatch):
     caps_arr = submits[0]["payload"]["capabilities"]
     assert isinstance(caps_arr, list) and caps_arr, "live list as array field"
     assert {e["name"] for e in caps_arr} == set(VALID_CAPS)
-    assert all(set(e) == {"name", "description", "input_schema", "available"}
+    # T-256-live: compact form — fields carry type/required (no schema dump),
+    # usable-phrase replaces the raw description (the example-copy source),
+    # result_paths ride for the ${ref} contract.
+    assert all(set(e) - {"name", "usable", "result_paths", "fields", "available"} == set()
                for e in caps_arr)
+    assert all("usable" in e and isinstance(e["usable"], str) for e in caps_arr)
+    # T-256-lab fixtur: VALID_CAPS carries no input_schema → fields absent;
+    # a schema-carrying cap still must land as compact fields dict.
+    probe_cap = {"probe-cap": {"available": True,
+                               "description": "Test cap. Parameter: x.",
+                               "input_schema": {"fields": {"x": {"name": "x", "type": "string", "required": True,
+                                                                 "description": "Long example text 'A red fox' — DROPPED"}}}}}
+    compact_probe = _caps_compact(probe_cap)[0]
+    assert compact_probe["fields"]["x"] == {"type": "string", "required": True}
+    assert "fox" not in json.dumps(compact_probe)
+    assert "usable" in compact_probe and "Test cap" in compact_probe["usable"]
 
 
 def test_split_submit_d9_feedback_in_taskprompt(monkeypatch):
