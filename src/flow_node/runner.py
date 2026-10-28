@@ -133,6 +133,7 @@ PLAN_SYSTEM_PROMPT = (
     "Every artifact the task requests must end at its final destination (storage.store when storage is requested). ids unique, each referenced id in depends_on, no cycles, minimum task count.\n"
     "\n"
     "HARD CONSTRAINTS:\n"
+    "- NEVER plan a 'flow.run' task — you ARE the flow planner; flow.run is the orchestrator itself and would recurse forever.\n"
     "- The examples inside input_schema field descriptions are FORMAT\n"
     "  examples. Never copy them into your plan. Prompts, titles and texts\n"
     "  must derive verbatim from the user task (its subjects, its wording).\n"
