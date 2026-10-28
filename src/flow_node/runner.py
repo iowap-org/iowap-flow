@@ -236,8 +236,11 @@ def _caps_compact(caps: dict[str, dict]) -> list[dict]:
         # The line now carries the exact contract form.
         if compact:
             entry["fields"] = compact
+            # T-256-e2e2: ".get()" everywhere — live caps carry fields without
+            # "type" (enum-only) and the KeyError killed the runner silently
+            # after 8 s (handler exited 1, empty result).
             field_line = ", ".join(
-                (f"{k} ({v['type']}{', required' if v.get('required') else ''})")
+                (f"{k} ({v.get('type', '?')}{', required' if v.get('required') else ''})")
                 for k, v in compact.items())
             entry["usable"] = (entry["usable"] + f" fields: {field_line}").strip()
         if cap.get("available") is False:
