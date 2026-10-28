@@ -216,8 +216,6 @@ def _caps_compact(caps: dict[str, dict]) -> list[dict]:
         if isinstance(hints, list) and hints:
             usable = (usable + f" result paths: {', '.join(str(h) for h in hints)}").strip()
         entry: dict[str, Any] = {"name": name, "usable": usable or "-"}
-        if isinstance(hints, list) and hints:
-            entry["result_paths"] = [str(h) for h in hints][:5]
         schema = cap.get("input_schema") or {}
         fields = schema.get("fields", schema) if isinstance(schema, dict) else {}
         compact: dict[str, Any] = {}
@@ -230,10 +228,18 @@ def _caps_compact(caps: dict[str, dict]) -> list[dict]:
                     finfo["type"] = v.get("type")
                 if v.get("required"):
                     finfo["required"] = True
-                if compact or fields:
-                    compact[k] = finfo
+                compact[k] = finfo
+        # T-256-e2e2 (live): the A-reihe proved the FIELD DECLARATION must be
+        # IN the readable line, not only in the JSON object: the planner read
+        # the prose ("Parameter: task") and ignored the fields map next to it
+        # (9-task E2E plan: image.gen.ai got "task" instead of "prompt" etc).
+        # The line now carries the exact contract form.
         if compact:
             entry["fields"] = compact
+            field_line = ", ".join(
+                (f"{k} ({v['type']}{', required' if v.get('required') else ''})")
+                for k, v in compact.items())
+            entry["usable"] = (entry["usable"] + f" fields: {field_line}").strip()
         if cap.get("available") is False:
             entry["available"] = False
         entries.append(entry)
