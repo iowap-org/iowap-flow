@@ -7,7 +7,7 @@
 # 1. Copies the profile to ~/.relay/node.yaml on EVERY start (pitfall #23:
 #    the profile lives in the image, not the volume — the volume only holds identity/state).
 # 2. Bootstraps the node identity if the volume is empty (pitfall #21):
-#    node-cli node register (T-178) is chicken-and-egg-free, creates meta+token
+#    iowap-cli node register (T-178) is chicken-and-egg-free, creates meta+token
 #    and aborts on an existing identity without changing anything — hence
 #    the check beforehand instead of --force.
 # 3. Starts the daemon in the foreground.
@@ -56,7 +56,7 @@ mkdir -p "$RELAY_DIR"
 cp /app/profiles/node.yaml "$RELAY_DIR/node.yaml"
 
 if [ ! -f "$RELAY_DIR/iowap-agent.json" ] && [ ! -f "$RELAY_DIR/ai-relay-agent.json" ]; then
-    node-cli node register "$RELAY_URL" --name "$NODE_NAME"
+    iowap-cli node register "$RELAY_URL" --name "$NODE_NAME"
 fi
 
-exec node-daemon --foreground
+exec iowap-daemon --foreground

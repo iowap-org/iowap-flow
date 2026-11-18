@@ -4,8 +4,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# iowap-node wird aus dem public GitHub-Repo installiert (pinned in pyproject) — braucht git zur Build-Zeit.
-RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+# iowap-node comes from PyPI (wheel, pinned in pyproject.toml) — no git needed at build time.
 
 COPY pyproject.toml README.md ./
 COPY src ./src
